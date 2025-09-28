@@ -13,51 +13,12 @@ import (
 
 	"gopkg.in/yaml.v3"
 
+	"github.com/temirov/llm-tasks/internal/config"
 	"github.com/temirov/llm-tasks/internal/pipeline"
 )
 
-type Config struct {
-	Task string `yaml:"task"`
-	LLM  struct {
-		Model       string  `yaml:"model"`
-		Temperature float64 `yaml:"temperature"`
-		MaxTokens   int     `yaml:"max_tokens"`
-	} `yaml:"llm"`
-	Inputs struct {
-		Version struct {
-			Required bool   `yaml:"required"`
-			Env      string `yaml:"env"`
-			Default  string `yaml:"default"`
-		} `yaml:"version"`
-		Date struct {
-			Required bool   `yaml:"required"`
-			Env      string `yaml:"env"`
-			Default  string `yaml:"default"`
-		} `yaml:"date"`
-		GitLog struct {
-			Required bool   `yaml:"required"`
-			Source   string `yaml:"source"` // "stdin"
-		} `yaml:"git_log"`
-	} `yaml:"inputs"`
-	Recipe struct {
-		System string `yaml:"system"`
-		Format struct {
-			Heading  string `yaml:"heading"`
-			Sections []struct {
-				Title string `yaml:"title"`
-				Min   int    `yaml:"min"`
-				Max   int    `yaml:"max"`
-			} `yaml:"sections"`
-			Footer string `yaml:"footer"`
-		} `yaml:"format"`
-		Rules []string `yaml:"rules"`
-	} `yaml:"recipe"`
-	Apply struct {
-		OutputPath      string `yaml:"output_path"`
-		Mode            string `yaml:"mode"` // "prepend" | "print"
-		EnsureBlankLine bool   `yaml:"ensure_blank_line"`
-	} `yaml:"apply"`
-}
+// Make the task's Config exactly the same type as config.ChangelogConfig.
+type Config = config.ChangelogConfig
 
 type Task struct {
 	cfg     Config
@@ -332,4 +293,9 @@ func (f failTask) Verify(ctx context.Context, _ pipeline.GatherOutput, _ pipelin
 }
 func (f failTask) Apply(ctx context.Context, _ pipeline.VerifiedOutput) (pipeline.ApplyReport, error) {
 	return pipeline.ApplyReport{}, f.err
+}
+
+// NewFromConfig constructs the task directly from an already-parsed config.
+func NewFromConfig(cfg Config) *Task {
+	return &Task{cfg: cfg}
 }

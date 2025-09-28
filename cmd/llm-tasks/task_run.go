@@ -18,141 +18,105 @@ import (
 )
 
 var (
-	runTaskName   string
-	runAttempts   int
-	runTimeout    time.Duration
-	runDry        bool
-	runModel      string
-	runEndpoint   string
-	runAPIKey     string
-	runSortConfig string
-
-	// YAML-only changelog flags
-	runChangelogConfig string
-	runVersion         string
-	runDate            string
-
-	appCfg       config.App
-	appCfgLoaded bool
+	runTaskName      string
+	runAttempts      int
+	runTimeout       time.Duration
+	runModelOverride string
 )
 
-func init() {
-	runCmd := &cobra.Command{
-		Use:   "run",
-		Short: "Run a registered LLM task (pipeline)",
-		RunE:  runTask,
-	}
-
-	runCmd.Flags().StringVar(&runTaskName, "name", "sort", "Task name to run (e.g., 'sort')")
-	runCmd.Flags().IntVar(&runAttempts, "attempts", 0, "Max refine attempts (0 = use defaults)")
-	runCmd.Flags().DurationVar(&runTimeout, "timeout", 0, "Per-attempt timeout (e.g., 45s; 0 = use defaults)")
-	runCmd.Flags().BoolVar(&runDry, "dry", false, "Dry-run (for tasks that support it)")
-	runCmd.Flags().StringVar(&runModel, "model", "", "Model override (default from app config)")
-	runCmd.Flags().StringVar(&runEndpoint, "endpoint", "", "API endpoint override (default from app config)")
-	runCmd.Flags().StringVar(&runAPIKey, "api-key", "", "API key override (default read from env in app config)")
-	runCmd.Flags().StringVar(&runSortConfig, "sort-config", "", "Path to sort task yaml (if set, exported to LLMTASKS_SORT_CONFIG)")
-
-	// Changelog (YAML-only) unified flow
-	runCmd.Flags().StringVar(&runChangelogConfig, "changelog-config", "", "Path to changelog task yaml (exported to LLMTASKS_CHANGELOG_CONFIG)")
-	runCmd.Flags().StringVar(&runVersion, "version", "", "Version for changelog (exported to CHANGELOG_VERSION)")
-	runCmd.Flags().StringVar(&runDate, "date", "", "Date for changelog (exported to CHANGELOG_DATE)")
-
-	taskCmd.AddCommand(runCmd)
-}
-
+// runTask is reused by the root-level `run` command (see run.go).
 func runTask(cmd *cobra.Command, args []string) error {
-	// Route per-task configs/env via process env so tasks can read them uniformly.
-
-	// sort config
-	if runSortConfig != "" {
-		if err := os.Setenv("LLMTASKS_SORT_CONFIG", runSortConfig); err != nil {
-			return err
-		}
-	}
-
-	// changelog config + inputs (YAML-only)
-	if runChangelogConfig != "" {
-		if err := os.Setenv("LLMTASKS_CHANGELOG_CONFIG", runChangelogConfig); err != nil {
-			return err
-		}
-	}
-	if runVersion != "" {
-		if err := os.Setenv("CHANGELOG_VERSION", runVersion); err != nil {
-			return err
-		}
-	}
-	if runDate != "" {
-		if err := os.Setenv("CHANGELOG_DATE", runDate); err != nil {
-			return err
-		}
-	}
-
-	// Load app config (defaults to ./configs/app.yaml)
-	if err := mustLoadAppCfg(); err != nil {
-		return err
-	}
-
-	// Register tasks
-	reg := pipeline.NewRegistry()
-	reg.Register("sort", func() pipeline.Pipeline { return sorttask.New() })
-	// YAML-only changelog task factory reads LLMTASKS_CHANGELOG_CONFIG or defaults
-	reg.Register("changelog", func() pipeline.Pipeline { return changelogtask.New() })
-
-	task, ok := reg.Create(runTaskName)
-	if !ok {
-		return fmt.Errorf("unknown task %q", runTaskName)
-	}
-
-	// Build LLM HTTP client + adapter
-	endpoint := firstNonEmpty(runEndpoint, appCfg.API.Endpoint, "https://api.openai.com/v1")
-	apiKey, err := getAPIKey(runAPIKey)
+	root, err := config.LoadRoot(runConfigPath)
 	if err != nil {
 		return err
 	}
-	model := firstNonEmpty(runModel, appCfg.Defaults.Model, "gpt-5-mini")
 
-	maxTokens := appCfg.Defaults.MaxTokens
-	if maxTokens <= 0 {
-		maxTokens = 1500
+	// Resolve recipe by name
+	rx, ok := root.FindRecipe(runTaskName)
+	if !ok || !rx.Enabled {
+		return fmt.Errorf("unknown or disabled recipe %q", runTaskName)
 	}
-	temp := appCfg.Defaults.Temperature
-	if temp <= 0 {
-		temp = 0.2
+
+	// Resolve model: override -> recipe.model -> default model
+	modelName := strings.TrimSpace(runModelOverride)
+	if modelName == "" {
+		modelName = strings.TrimSpace(rx.Model)
+	}
+	if modelName == "" {
+		if def, ok := root.DefaultModel(); ok {
+			modelName = def.Name
+		}
+	}
+	mc, ok := root.FindModel(modelName)
+	if !ok {
+		return fmt.Errorf("model %q not found in models[]", modelName)
+	}
+
+	// Build low-level HTTP client
+	apiKeyEnv := root.Common.API.APIKeyEnv
+	if strings.TrimSpace(apiKeyEnv) == "" {
+		apiKeyEnv = "OPENAI_API_KEY"
+	}
+	apiKey := strings.TrimSpace(os.Getenv(apiKeyEnv))
+	if apiKey == "" {
+		return fmt.Errorf("missing API key: set %s", apiKeyEnv)
+	}
+	endpoint := root.Common.API.Endpoint
+	if strings.TrimSpace(endpoint) == "" {
+		endpoint = "https://api.openai.com/v1"
 	}
 
 	httpClient := llm.Client{
 		HTTPBaseURL:       endpoint,
 		APIKey:            apiKey,
-		ModelIdentifier:   model,
-		MaxTokensResponse: maxTokens,
-		Temperature:       temp,
+		ModelIdentifier:   mc.ModelID,
+		MaxTokensResponse: mc.MaxCompletionTokens,
+		Temperature:       mc.DefaultTemperature,
 	}
 	adapter := llm.Adapter{
-		Client:        httpClient,
-		DefaultModel:  model,
-		DefaultTemp:   temp,
-		DefaultTokens: maxTokens,
+		Client:              httpClient,
+		DefaultModel:        mc.ModelID,
+		DefaultTemp:         mc.DefaultTemperature,
+		DefaultTokens:       mc.MaxCompletionTokens,
+		SupportsTemperature: mc.SupportsTemperature,
 	}
 
 	// Runner options
-	attempts := appCfg.Defaults.Attempts
+	attempts := root.Common.Defaults.Attempts
 	if runAttempts > 0 {
 		attempts = runAttempts
 	}
 	if attempts <= 0 {
 		attempts = 3
 	}
-	timeout := time.Duration(appCfg.Defaults.TimeoutSeconds) * time.Second
+	timeout := time.Duration(root.Common.Defaults.TimeoutSeconds) * time.Second
 	if runTimeout > 0 {
 		timeout = runTimeout
 	}
 	if timeout <= 0 {
 		timeout = 45 * time.Second
 	}
-
 	runner := pipeline.Runner{
 		Client:  adapter,
-		Options: pipeline.RunOptions{MaxAttempts: attempts, DryRun: runDry, Timeout: timeout},
+		Options: pipeline.RunOptions{MaxAttempts: attempts, DryRun: false, Timeout: timeout},
+	}
+
+	// Registry and task construction strictly from recipe type
+	var task pipeline.Pipeline
+	switch rx.Type {
+	case "task/sort":
+		task = sorttask.NewWithDeps(
+			sorttask.DefaultFS(), // OS-backed fsops
+			sorttask.NewUnifiedProvider(root, rx.Name),
+		)
+	case "task/changelog":
+		cfg, mapErr := config.MapChangelog(rx)
+		if mapErr != nil {
+			return mapErr
+		}
+		task = changelogtask.NewFromConfig(changelogtask.Config(cfg))
+	default:
+		return fmt.Errorf("unknown recipe type: %s", rx.Type)
 	}
 
 	ctx := context.Background()
@@ -160,57 +124,6 @@ func runTask(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-
 	fmt.Printf("%s (actions=%d, dry=%v)\n", report.Summary, report.NumActions, report.DryRun)
 	return nil
-}
-
-// ---- config helpers ----
-
-func mustLoadAppCfg() error {
-	if appCfgLoaded {
-		return nil
-	}
-	path := firstNonEmpty(os.Getenv("LLMTASKS_APP_CONFIG"), "configs/app.yaml")
-	cfg, err := config.LoadApp(path)
-	if err != nil {
-		// Fall back to minimal defaults if the file isn’t present.
-		appCfg.API.Endpoint = firstNonEmpty(os.Getenv("LLMTASKS_API_ENDPOINT"), "https://api.openai.com/v1")
-		appCfg.API.APIKeyEnv = firstNonEmpty(os.Getenv("LLMTASKS_API_KEY_ENV"), "OPENAI_API_KEY")
-		appCfg.Defaults.Model = "gpt-5-mini"
-		appCfg.Defaults.Temperature = 0.2
-		appCfg.Defaults.MaxTokens = 1500
-		appCfg.Defaults.Attempts = 3
-		appCfg.Defaults.TimeoutSeconds = 45
-		appCfgLoaded = true
-		return nil
-	}
-	appCfg = cfg
-	appCfgLoaded = true
-	return nil
-}
-
-func getAPIKey(flagVal string) (string, error) {
-	if strings.TrimSpace(flagVal) != "" {
-		return flagVal, nil
-	}
-	if !appCfgLoaded {
-		if err := mustLoadAppCfg(); err != nil {
-			return "", err
-		}
-	}
-	envName := firstNonEmpty(appCfg.API.APIKeyEnv, "OPENAI_API_KEY")
-	if v := strings.TrimSpace(os.Getenv(envName)); v != "" {
-		return v, nil
-	}
-	return "", fmt.Errorf("missing API key: pass --api-key or set %s", envName)
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return v
-		}
-	}
-	return ""
 }

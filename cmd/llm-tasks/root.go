@@ -8,7 +8,7 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "llm-tasks",
-	Short: "Recipe-driven CLI to run LLM tasks",
+	Short: "Unified-config CLI to run LLM tasks",
 }
 
 func Execute() {
