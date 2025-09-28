@@ -1,9 +1,0 @@
-api:
-  endpoint: https://api.openai.com/v1
-  api_key_env: OPENAI_API_KEY
-defaults:
-  model: gpt-5-mini
-  temperature: 1
-  max_tokens: 1500
-  attempts: 3
-  timeout_seconds: 45

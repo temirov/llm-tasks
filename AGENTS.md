@@ -50,6 +50,7 @@
 * `pkg/` for reusable libraries.
 * No package cycles.
 * Respect existing layout and naming.
+* Use `pkg/utils` for non-domain-specific helpers
 
 ---
 
@@ -58,7 +59,7 @@
 * Use Viper + Cobra.
 * Flags optional when provided via config/env.
 * Validate config in `PreRunE`.
-* Read secrets from environment.
+* Read secrets from the environment.
 
 ---
 
@@ -70,7 +71,7 @@
 * Auth/Validation: `golang-jwt/jwt/v5`, `go-playground/validator/v10`.
 * Testing: `stretchr/testify`.
 * Optional: `joho/godotenv`, `prometheus/client_golang`, `robfig/cron/v3`.
-* Prefer standard library whenever possible.
+* Prefer the standard library whenever possible.
 
 ---
 

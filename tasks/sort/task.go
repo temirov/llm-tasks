@@ -32,6 +32,9 @@ func NewWithDeps(fs fsops.Ops, cfg SortConfigProvider) pipeline.Pipeline {
 	return &Task{fs: fs, cfgProv: cfg}
 }
 
+// DefaultFS exported for wiring from the runner
+func DefaultFS() fsops.Ops { return fsops.NewOps(fsops.NewOS()) }
+
 type FileMeta struct {
 	AbsolutePath string `json:"absolute_path"`
 	BaseName     string `json:"base_name"`
