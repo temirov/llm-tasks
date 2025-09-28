@@ -1,0 +1,20 @@
+grant:
+  base_directories:
+    downloads: "/media/share/Drive/exchange/Downloads"
+    staging:   "/media/share/Drive/exchange/Downloads/_sorted"
+  safety:
+    dry_run: true
+
+projects:
+  - name: "3D_Printing"
+    target: "3D_Printing"
+    keywords: ["3mf","stl","obj","mtl","bambu","bambulab","plate","nozzle"]
+  - name: "AI_Art_Assets"
+    target: "AI_Art_Assets"
+    keywords: ["dall·e","forprint","poster","gemini_generated","webp","png"]
+  - name: "Data_CSV"
+    target: "Data_CSV"
+    keywords: ["csv","ghcnd","lcd","sales_tax","zip_locale"]
+
+thresholds:
+  min_confidence: 0.6

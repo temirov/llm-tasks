@@ -23,10 +23,10 @@ type ChatMessage struct {
 }
 
 type ChatCompletionRequest struct {
-	Model       string        `json:"model"`
-	Messages    []ChatMessage `json:"messages"`
-	MaxTokens   int           `json:"max_tokens,omitempty"`
-	Temperature float64       `json:"temperature,omitempty"`
+	Model               string        `json:"model"`
+	Messages            []ChatMessage `json:"messages"`
+	MaxCompletionTokens int           `json:"max_completion_tokens,omitempty"` // OpenAI 2025 param name
+	Temperature         float64       `json:"temperature,omitempty"`
 }
 
 type ChatCompletionResponse struct {
@@ -40,29 +40,34 @@ func (c Client) CreateChatCompletion(ctx context.Context, requestPayload ChatCom
 	if marshalErr != nil {
 		return "", marshalErr
 	}
-	httpRequest, buildErr := http.NewRequestWithContext(ctx, http.MethodPost, c.HTTPBaseURL+"/chat/completions", bytes.NewReader(requestBytes))
+
+	req, buildErr := http.NewRequestWithContext(
+		ctx,
+		http.MethodPost,
+		c.HTTPBaseURL+"/chat/completions",
+		bytes.NewReader(requestBytes),
+	)
 	if buildErr != nil {
 		return "", buildErr
 	}
-	httpRequest.Header.Set("Content-Type", "application/json")
-	httpRequest.Header.Set("Authorization", "Bearer "+c.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+c.APIKey)
 
 	httpClient := &http.Client{}
-	httpResponse, httpErr := httpClient.Do(httpRequest)
+	res, httpErr := httpClient.Do(req)
 	if httpErr != nil {
 		return "", httpErr
 	}
-	defer func(closer io.ReadCloser) { _ = closer.Close() }(httpResponse.Body)
+	defer func(closer io.ReadCloser) { _ = closer.Close() }(res.Body)
 
-	if httpResponse.StatusCode < 200 || httpResponse.StatusCode >= 300 {
-		bodyBytes, _ := io.ReadAll(httpResponse.Body)
-		return "", fmt.Errorf("llm http error %d: %s", httpResponse.StatusCode, string(bodyBytes))
+	if res.StatusCode < 200 || res.StatusCode >= 300 {
+		bodyBytes, _ := io.ReadAll(res.Body)
+		return "", fmt.Errorf("llm http error %d: %s", res.StatusCode, string(bodyBytes))
 	}
 
 	var completion ChatCompletionResponse
-	decodeErr := json.NewDecoder(httpResponse.Body).Decode(&completion)
-	if decodeErr != nil {
-		return "", decodeErr
+	if err := json.NewDecoder(res.Body).Decode(&completion); err != nil {
+		return "", err
 	}
 	if len(completion.Choices) == 0 {
 		return "", fmt.Errorf("empty completion")
