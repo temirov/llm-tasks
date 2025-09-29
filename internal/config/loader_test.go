@@ -27,13 +27,21 @@ const (
 	directoryPermissions                = 0o755
 	filePermissions                     = 0o644
 	embeddedRecipeMissingErrorFormat    = "expected recipe %s to be available"
+	sanitizedSortDownloadsPlaceholder   = "${SORT_DOWNLOADS_DIR}"
+	sanitizedSortStagingPlaceholder     = "${SORT_STAGING_DIR}"
+	sortGrantDownloadsKey               = "downloads"
+	sortGrantStagingKey                 = "staging"
+	missingSortGrantBaseDirectoryFormat = "missing sort grant base directory %s"
+	unexpectedSortGrantPathFormat       = "expected sort grant base directory %s to be %s, got %s"
+	sortRecipeMappingFailureFormat      = "map sort recipe: %v"
 )
 
 type loaderTestCase struct {
-	name                 string
-	setup                func(t *testing.T, workingDirectory string, homeDirectory string) (string, string)
-	expectedLoggingLevel string
-	expectedRecipeNames  []string
+	name                             string
+	setup                            func(t *testing.T, workingDirectory string, homeDirectory string) (string, string)
+	expectedLoggingLevel             string
+	expectedRecipeNames              []string
+	expectedSortGrantBaseDirectories map[string]string
 }
 
 func TestRootConfigurationLoader_Load(t *testing.T) {
@@ -88,6 +96,10 @@ func TestRootConfigurationLoader_Load(t *testing.T) {
 			},
 			expectedLoggingLevel: embeddedLoggingLevel,
 			expectedRecipeNames:  []string{embeddedSortRecipeName, embeddedChangelogRecipeName},
+			expectedSortGrantBaseDirectories: map[string]string{
+				sortGrantDownloadsKey: sanitizedSortDownloadsPlaceholder,
+				sortGrantStagingKey:   sanitizedSortStagingPlaceholder,
+			},
 		},
 	}
 
@@ -117,6 +129,29 @@ func TestRootConfigurationLoader_Load(t *testing.T) {
 			for _, expectedRecipeName := range testCase.expectedRecipeNames {
 				if _, recipeFound := rootConfiguration.FindRecipe(expectedRecipeName); !recipeFound {
 					t.Fatalf(embeddedRecipeMissingErrorFormat, expectedRecipeName)
+				}
+			}
+			if len(testCase.expectedSortGrantBaseDirectories) > 0 {
+				sortRecipe, sortRecipeFound := rootConfiguration.FindRecipe(embeddedSortRecipeName)
+				if !sortRecipeFound {
+					t.Fatalf(embeddedRecipeMissingErrorFormat, embeddedSortRecipeName)
+				}
+				sortConfiguration, sortConfigurationMapError := config.MapSort(sortRecipe)
+				if sortConfigurationMapError != nil {
+					t.Fatalf(sortRecipeMappingFailureFormat, sortConfigurationMapError)
+				}
+				actualGrantDirectories := map[string]string{
+					sortGrantDownloadsKey: sortConfiguration.Grant.BaseDirectories.Downloads,
+					sortGrantStagingKey:   sortConfiguration.Grant.BaseDirectories.Staging,
+				}
+				for directoryKey, expectedPath := range testCase.expectedSortGrantBaseDirectories {
+					actualPath, directoryFound := actualGrantDirectories[directoryKey]
+					if !directoryFound {
+						t.Fatalf(missingSortGrantBaseDirectoryFormat, directoryKey)
+					}
+					if actualPath != expectedPath {
+						t.Fatalf(unexpectedSortGrantPathFormat, directoryKey, expectedPath, actualPath)
+					}
 				}
 			}
 		})

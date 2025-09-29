@@ -232,7 +232,11 @@ func (p FileSortConfigProvider) Load() (config.Sort, error) {
 	if v := strings.TrimSpace(osGetenv(p.PathEnv)); v != "" {
 		path = v
 	}
-	return config.LoadSort(path)
+	sortConfiguration, loadError := config.LoadSort(path)
+	if loadError != nil {
+		return config.Sort{}, loadError
+	}
+	return resolveSortGrantBaseDirectories(sortConfiguration, lookupEnvironmentVariable)
 }
 
 // indirection to allow stubbing in rare cases (not used currently)
