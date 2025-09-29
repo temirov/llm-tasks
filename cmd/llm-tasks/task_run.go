@@ -1,8 +1,6 @@
-// cmd/llm-tasks/task_run.go
-package main
+package llmtasks
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -17,113 +15,145 @@ import (
 	sorttask "github.com/temirov/llm-tasks/tasks/sort"
 )
 
-var (
-	runTaskName      string
-	runAttempts      int
-	runTimeout       time.Duration
-	runModelOverride string
-)
+type pipelineBuilder func(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error)
 
-// runTask is reused by the root-level `run` command (see run.go).
-func runTask(cmd *cobra.Command, args []string) error {
-	root, err := config.LoadRoot(runConfigPath)
+var pipelineBuilders = map[string]pipelineBuilder{
+	"task/sort":      buildSortPipeline,
+	"task/changelog": buildChangelogPipeline,
+}
+
+func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
+	rootConfiguration, err := config.LoadRoot(options.configPath)
 	if err != nil {
-		return err
+		return fmt.Errorf("load root configuration %s: %w", options.configPath, err)
 	}
 
-	// Resolve recipe by name
-	rx, ok := root.FindRecipe(runTaskName)
-	if !ok || !rx.Enabled {
-		return fmt.Errorf("unknown or disabled recipe %q", runTaskName)
+	targetRecipe, recipeFound := rootConfiguration.FindRecipe(options.taskName)
+	if !recipeFound || !targetRecipe.Enabled {
+		return fmt.Errorf("unknown or disabled recipe %q", options.taskName)
 	}
 
-	// Resolve model: override -> recipe.model -> default model
-	modelName := strings.TrimSpace(runModelOverride)
-	if modelName == "" {
-		modelName = strings.TrimSpace(rx.Model)
-	}
-	if modelName == "" {
-		if def, ok := root.DefaultModel(); ok {
-			modelName = def.Name
-		}
-	}
-	mc, ok := root.FindModel(modelName)
-	if !ok {
-		return fmt.Errorf("model %q not found in models[]", modelName)
+	selectedModelName := resolveModelName(options, targetRecipe, rootConfiguration)
+	modelConfiguration, modelFound := rootConfiguration.FindModel(selectedModelName)
+	if !modelFound {
+		return fmt.Errorf("model %q not found in models[]", selectedModelName)
 	}
 
-	// Build low-level HTTP client
-	apiKeyEnv := root.Common.API.APIKeyEnv
-	if strings.TrimSpace(apiKeyEnv) == "" {
-		apiKeyEnv = "OPENAI_API_KEY"
+	apiKeyEnvironmentVariable := strings.TrimSpace(rootConfiguration.Common.API.APIKeyEnv)
+	if apiKeyEnvironmentVariable == "" {
+		apiKeyEnvironmentVariable = defaultAPIKeyEnvironmentVariable
 	}
-	apiKey := strings.TrimSpace(os.Getenv(apiKeyEnv))
+	apiKey := strings.TrimSpace(os.Getenv(apiKeyEnvironmentVariable))
 	if apiKey == "" {
-		return fmt.Errorf("missing API key: set %s", apiKeyEnv)
+		return fmt.Errorf("missing API key: set %s", apiKeyEnvironmentVariable)
 	}
-	endpoint := root.Common.API.Endpoint
-	if strings.TrimSpace(endpoint) == "" {
-		endpoint = "https://api.openai.com/v1"
+
+	apiEndpoint := strings.TrimSpace(rootConfiguration.Common.API.Endpoint)
+	if apiEndpoint == "" {
+		apiEndpoint = defaultAPIEndpoint
 	}
 
 	httpClient := llm.Client{
-		HTTPBaseURL:       endpoint,
+		HTTPBaseURL:       apiEndpoint,
 		APIKey:            apiKey,
-		ModelIdentifier:   mc.ModelID,
-		MaxTokensResponse: mc.MaxCompletionTokens,
-		Temperature:       mc.DefaultTemperature,
+		ModelIdentifier:   modelConfiguration.ModelID,
+		MaxTokensResponse: modelConfiguration.MaxCompletionTokens,
+		Temperature:       modelConfiguration.DefaultTemperature,
 	}
 	adapter := llm.Adapter{
 		Client:              httpClient,
-		DefaultModel:        mc.ModelID,
-		DefaultTemp:         mc.DefaultTemperature,
-		DefaultTokens:       mc.MaxCompletionTokens,
-		SupportsTemperature: mc.SupportsTemperature,
+		DefaultModel:        modelConfiguration.ModelID,
+		DefaultTemp:         modelConfiguration.DefaultTemperature,
+		DefaultTokens:       modelConfiguration.MaxCompletionTokens,
+		SupportsTemperature: modelConfiguration.SupportsTemperature,
 	}
 
-	// Runner options
-	attempts := root.Common.Defaults.Attempts
-	if runAttempts > 0 {
-		attempts = runAttempts
+	effectiveAttempts := rootConfiguration.Common.Defaults.Attempts
+	if options.attempts > 0 {
+		effectiveAttempts = options.attempts
 	}
-	if attempts <= 0 {
-		attempts = 3
+	if effectiveAttempts <= 0 {
+		effectiveAttempts = 3
 	}
-	timeout := time.Duration(root.Common.Defaults.TimeoutSeconds) * time.Second
-	if runTimeout > 0 {
-		timeout = runTimeout
+
+	effectiveTimeout := time.Duration(rootConfiguration.Common.Defaults.TimeoutSeconds) * time.Second
+	if options.timeout > 0 {
+		effectiveTimeout = options.timeout
 	}
-	if timeout <= 0 {
-		timeout = 45 * time.Second
+	if effectiveTimeout <= 0 {
+		effectiveTimeout = 45 * time.Second
 	}
+
 	runner := pipeline.Runner{
-		Client:  adapter,
-		Options: pipeline.RunOptions{MaxAttempts: attempts, DryRun: false, Timeout: timeout},
+		Client: adapter,
+		Options: pipeline.RunOptions{
+			MaxAttempts: effectiveAttempts,
+			DryRun:      false,
+			Timeout:     effectiveTimeout,
+		},
 	}
 
-	// Registry and task construction strictly from recipe type
-	var task pipeline.Pipeline
-	switch rx.Type {
-	case "task/sort":
-		task = sorttask.NewWithDeps(
-			sorttask.DefaultFS(), // OS-backed fsops
-			sorttask.NewUnifiedProvider(root, rx.Name),
-		)
-	case "task/changelog":
-		cfg, mapErr := config.MapChangelog(rx)
-		if mapErr != nil {
-			return mapErr
-		}
-		task = changelogtask.NewFromConfig(changelogtask.Config(cfg))
-	default:
-		return fmt.Errorf("unknown recipe type: %s", rx.Type)
+	taskPipeline, builderErr := buildPipeline(rootConfiguration, targetRecipe)
+	if builderErr != nil {
+		return builderErr
 	}
 
-	ctx := context.Background()
-	report, err := runner.Run(ctx, task)
-	if err != nil {
-		return err
+	executionContext := command.Context()
+	report, runErr := runner.Run(executionContext, taskPipeline)
+	if runErr != nil {
+		return fmt.Errorf("run pipeline %s: %w", targetRecipe.Name, runErr)
 	}
-	fmt.Printf("%s (actions=%d, dry=%v)\n", report.Summary, report.NumActions, report.DryRun)
+
+	_, writeErr := fmt.Fprintf(command.OutOrStdout(), "%s (actions=%d, dry=%v)\n", report.Summary, report.NumActions, report.DryRun)
+	if writeErr != nil {
+		return fmt.Errorf("write run result: %w", writeErr)
+	}
+
 	return nil
+}
+
+func resolveModelName(options runCommandOptions, recipe config.Recipe, root config.Root) string {
+	modelName := strings.TrimSpace(options.modelOverride)
+	if modelName != "" {
+		return modelName
+	}
+
+	recipeModel := strings.TrimSpace(recipe.Model)
+	if recipeModel != "" {
+		return recipeModel
+	}
+
+	defaultModel, ok := root.DefaultModel()
+	if ok {
+		return defaultModel.Name
+	}
+
+	return ""
+}
+
+func buildPipeline(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error) {
+	builder, ok := pipelineBuilders[recipe.Type]
+	if !ok {
+		return nil, fmt.Errorf("unknown recipe type: %s", recipe.Type)
+	}
+
+	pipelineInstance, err := builder(root, recipe)
+	if err != nil {
+		return nil, fmt.Errorf("build pipeline for recipe %s: %w", recipe.Name, err)
+	}
+
+	return pipelineInstance, nil
+}
+
+func buildSortPipeline(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error) {
+	provider := sorttask.NewUnifiedProvider(root, recipe.Name)
+	return sorttask.NewWithDeps(sorttask.DefaultFS(), provider), nil
+}
+
+func buildChangelogPipeline(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error) {
+	mappedConfig, err := config.MapChangelog(recipe)
+	if err != nil {
+		return nil, fmt.Errorf("map changelog recipe %s: %w", recipe.Name, err)
+	}
+	return changelogtask.NewFromConfig(changelogtask.Config(mappedConfig)), nil
 }

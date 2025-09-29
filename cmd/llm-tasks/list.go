@@ -1,4 +1,4 @@
-package main
+package llmtasks
 
 import (
 	"fmt"
@@ -8,44 +8,57 @@ import (
 	"github.com/temirov/llm-tasks/internal/config"
 )
 
-var (
-	listAllFlag    bool
-	rootConfigPath string
-)
+type listCommandOptions struct {
+	includeDisabled bool
+	configPath      string
+}
 
-func init() {
-	listCmd := &cobra.Command{
-		Use:   "list",
-		Short: "List recipes from config.yaml (enabled by default)",
+func newListCommand() *cobra.Command {
+	options := &listCommandOptions{configPath: defaultConfigPath}
+
+	command := &cobra.Command{
+		Use:   listCommandUse,
+		Short: listCommandShort,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := config.LoadRoot(rootConfigPath)
-			if err != nil {
-				return err
-			}
-			for _, r := range root.Recipes {
-				if !listAllFlag && !r.Enabled {
-					continue
-				}
-				state := "enabled"
-				if !r.Enabled {
-					state = "disabled"
-				}
-				// Write to Cobra's writer so tests can capture output reliably.
-				fmt.Fprintf(cmd.OutOrStdout(), "%s\t(%s, model=%s)\n", r.Name, state, dashIfEmpty(r.Model))
-			}
-			return nil
+			return runListCommand(cmd, *options)
 		},
 	}
 
-	listCmd.Flags().BoolVar(&listAllFlag, "all", false, "Show disabled recipes as well")
-	listCmd.Flags().StringVar(&rootConfigPath, "config", "./config.yaml", "Path to unified config.yaml")
+	command.Flags().BoolVar(&options.includeDisabled, allFlagName, false, allFlagUsage)
+	command.Flags().StringVar(&options.configPath, configFlagName, defaultConfigPath, configFlagUsage)
 
-	rootCmd.AddCommand(listCmd)
+	return command
 }
 
-func dashIfEmpty(s string) string {
-	if s == "" {
-		return "-"
+func runListCommand(command *cobra.Command, options listCommandOptions) error {
+	rootConfiguration, err := config.LoadRoot(options.configPath)
+	if err != nil {
+		return fmt.Errorf("load root configuration %s: %w", options.configPath, err)
 	}
-	return s
+
+	for _, recipe := range rootConfiguration.Recipes {
+		if !options.includeDisabled && !recipe.Enabled {
+			continue
+		}
+
+		recipeStateLabel := enabledStateLabel
+		if !recipe.Enabled {
+			recipeStateLabel = disabledStateLabel
+		}
+
+		outputWriter := command.OutOrStdout()
+		_, writeErr := fmt.Fprintf(outputWriter, "%s\t(%s, model=%s)\n", recipe.Name, recipeStateLabel, dashIfEmpty(recipe.Model))
+		if writeErr != nil {
+			return fmt.Errorf("write recipe listing: %w", writeErr)
+		}
+	}
+
+	return nil
+}
+
+func dashIfEmpty(value string) string {
+	if value == "" {
+		return dashPlaceholder
+	}
+	return value
 }

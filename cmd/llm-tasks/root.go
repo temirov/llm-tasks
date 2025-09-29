@@ -1,18 +1,26 @@
-package main
+package llmtasks
 
-import (
-	"os"
+import "github.com/spf13/cobra"
 
-	"github.com/spf13/cobra"
+const (
+	rootUse   = "llm-tasks"
+	rootShort = "CLI to run LLM tasks"
 )
 
-var rootCmd = &cobra.Command{
-	Use:   "llm-tasks",
-	Short: "Unified-config CLI to run LLM tasks",
+// NewRootCommand builds the root command for the llm-tasks CLI.
+func NewRootCommand() *cobra.Command {
+	rootCommand := &cobra.Command{
+		Use:   rootUse,
+		Short: rootShort,
+	}
+
+	rootCommand.AddCommand(newListCommand())
+	rootCommand.AddCommand(newRunCommand())
+
+	return rootCommand
 }
 
-func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+// Execute runs the llm-tasks CLI.
+func Execute() error {
+	return NewRootCommand().Execute()
 }
