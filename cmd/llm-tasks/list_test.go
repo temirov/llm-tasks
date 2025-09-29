@@ -1,4 +1,4 @@
-package main
+package llmtasks
 
 import (
 	"bytes"
@@ -42,53 +42,61 @@ recipes:
     thresholds: { }
 `
 
-func writeTempConfig(t *testing.T) string {
-	t.Helper()
-	dir := t.TempDir()
-	path := filepath.Join(dir, "config.yaml")
-	if err := os.WriteFile(path, []byte(sampleConfig), 0o644); err != nil {
-		t.Fatalf("write config: %v", err)
+func writeTempConfig(testingT *testing.T) string {
+	testingT.Helper()
+	temporaryDirectory := testingT.TempDir()
+	configPath := filepath.Join(temporaryDirectory, "config.yaml")
+	if err := os.WriteFile(configPath, []byte(sampleConfig), 0o644); err != nil {
+		testingT.Fatalf("write config: %v", err)
 	}
-	return path
+	return configPath
 }
 
-func TestRootList_DefaultFiltersDisabled(t *testing.T) {
-	cfg := writeTempConfig(t)
-
-	var out bytes.Buffer
-	rootCmd.SetOut(&out)
-	rootCmd.SetErr(&out)
-	rootCmd.SetArgs([]string{"list", "--config", cfg})
-	t.Cleanup(func() { rootCmd.SetArgs([]string{}) })
-
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("execute list: %v\nstdout:\n%s", err, out.String())
+func TestRootListCommand(t *testing.T) {
+	configPath := writeTempConfig(t)
+	testCases := []struct {
+		name                string
+		arguments           []string
+		expectedSubstrings  []string
+		forbiddenSubstrings []string
+	}{
+		{
+			name:                "DefaultFiltersDisabled",
+			arguments:           []string{"list", "--config", configPath},
+			expectedSubstrings:  []string{"changelog"},
+			forbiddenSubstrings: []string{"sort"},
+		},
+		{
+			name:                "AllShowsDisabled",
+			arguments:           []string{"list", "--config", configPath, "--all"},
+			expectedSubstrings:  []string{"changelog", "sort"},
+			forbiddenSubstrings: []string{},
+		},
 	}
 
-	got := out.String()
-	if !bytes.Contains([]byte(got), []byte("changelog")) {
-		t.Fatalf("expected to list enabled recipe 'changelog'; got:\n%s", got)
-	}
-	if bytes.Contains([]byte(got), []byte("sort")) {
-		t.Fatalf("did not expect disabled recipe 'sort' without --all; got:\n%s", got)
-	}
-}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			command := NewRootCommand()
+			var buffer bytes.Buffer
+			command.SetOut(&buffer)
+			command.SetErr(&buffer)
+			command.SetArgs(testCase.arguments)
 
-func TestRootList_AllShowsDisabled(t *testing.T) {
-	cfg := writeTempConfig(t)
+			if err := command.Execute(); err != nil {
+				t.Fatalf("execute list command: %v\nstdout:\n%s", err, buffer.String())
+			}
 
-	var out bytes.Buffer
-	rootCmd.SetOut(&out)
-	rootCmd.SetErr(&out)
-	rootCmd.SetArgs([]string{"list", "--config", cfg, "--all"})
-	t.Cleanup(func() { rootCmd.SetArgs([]string{}) })
-
-	if err := rootCmd.Execute(); err != nil {
-		t.Fatalf("execute list --all: %v\nstdout:\n%s", err, out.String())
-	}
-
-	got := out.String()
-	if !bytes.Contains([]byte(got), []byte("changelog")) || !bytes.Contains([]byte(got), []byte("sort")) {
-		t.Fatalf("expected to list both 'changelog' and 'sort'; got:\n%s", got)
+			outputBytes := buffer.Bytes()
+			for _, substring := range testCase.expectedSubstrings {
+				if !bytes.Contains(outputBytes, []byte(substring)) {
+					t.Fatalf("expected substring %q in output:\n%s", substring, buffer.String())
+				}
+			}
+			for _, substring := range testCase.forbiddenSubstrings {
+				if bytes.Contains(outputBytes, []byte(substring)) {
+					t.Fatalf("did not expect substring %q in output:\n%s", substring, buffer.String())
+				}
+			}
+		})
 	}
 }
