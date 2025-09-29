@@ -32,11 +32,15 @@ func (u *UnifiedSortConfigProvider) Load() (config.Sort, error) {
 	out.Grant.Safety.DryRun = sy.Grant.Safety.DryRun
 	for _, p := range sy.Projects {
 		out.Projects = append(out.Projects, struct {
-			Name     string   "yaml:\"name\""
-			Target   string   "yaml:\"target\""
-			Keywords []string "yaml:\"keywords\""
+			Name     string   `yaml:"name"`
+			Target   string   `yaml:"target"`
+			Keywords []string `yaml:"keywords"`
 		}{Name: p.Name, Target: p.Target, Keywords: p.Keywords})
 	}
 	out.Thresholds.MinConfidence = sy.Thresholds.MinConfidence
-	return out, nil
+	resolvedSortConfiguration, resolutionError := resolveSortGrantBaseDirectories(out, lookupEnvironmentVariable)
+	if resolutionError != nil {
+		return config.Sort{}, resolutionError
+	}
+	return resolvedSortConfiguration, nil
 }
