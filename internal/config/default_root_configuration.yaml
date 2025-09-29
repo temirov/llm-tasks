@@ -32,8 +32,8 @@ recipes:
     type: task/sort
     grant:
       base_directories:
-        downloads: "/media/share/Drive/exchange/Downloads"
-        staging: "/media/share/Drive/exchange/Downloads/_sorted"
+        downloads: "${SORT_DOWNLOADS_DIR}"
+        staging: "${SORT_STAGING_DIR}"
       safety:
         dry_run: true
     projects:

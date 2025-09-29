@@ -61,6 +61,17 @@ recipes:
   Array of enabled tasks. Each recipe binds to a model and type (`task/sort`, `task/changelog`, …). Disabled recipes are
   ignored unless explicitly listed with `--all`.
 
+### Embedded defaults
+
+When no user configuration file is found, the embedded fallback remains active. Operators must provide the following
+environment variables so the sort recipe can resolve directories safely:
+
+* `SORT_DOWNLOADS_DIR` — absolute path to the directory containing inbound files that require sorting.
+* `SORT_STAGING_DIR` — absolute path to the directory where categorized files are placed.
+
+If either environment variable is missing, the sort recipe should be disabled in a custom configuration or the
+variables should be exported before invoking the CLI.
+
 ## Usage
 
 List registered tasks (enabled by default):
