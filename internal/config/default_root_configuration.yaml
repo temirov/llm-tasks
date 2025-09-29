@@ -1,0 +1,19 @@
+common:
+  api:
+    endpoint: https://api.openai.com/v1
+    api_key_env: OPENAI_API_KEY
+  logging:
+    level: info
+    format: console
+  defaults:
+    attempts: 3
+    timeout_seconds: 45
+models:
+  - name: default
+    provider: openai
+    model_id: gpt-4
+    default: true
+    supports_temperature: true
+    default_temperature: 0.2
+    max_completion_tokens: 4096
+recipes: []

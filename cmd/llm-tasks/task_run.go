@@ -23,9 +23,9 @@ var pipelineBuilders = map[string]pipelineBuilder{
 }
 
 func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
-	rootConfiguration, err := config.LoadRoot(options.configPath)
+	rootConfiguration, err := loadRootConfiguration(options.configPath)
 	if err != nil {
-		return fmt.Errorf("load root configuration %s: %w", options.configPath, err)
+		return err
 	}
 
 	targetRecipe, recipeFound := rootConfiguration.FindRecipe(options.taskName)

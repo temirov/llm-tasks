@@ -9,6 +9,17 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
+const (
+	changelogTaskName                        = "changelog"
+	emptyModelsErrorMessage                  = "config.models is empty"
+	missingDefaultModelErrorMessage          = "no default model found (set models[].default: true)"
+	rootConfigurationEmptyContentErrorFormat = "root configuration %s is empty"
+	rootConfigurationUnmarshalErrorFormat    = "unmarshal root configuration %s: %w"
+	mapSortMarshalErrorFormat                = "marshal sort recipe: %w"
+	mapSortUnmarshalErrorFormat              = "map sort recipe: %w"
+	mapChangelogUnmarshalErrorFormat         = "map changelog recipe: %w"
+)
+
 type Root struct {
 	Common  Common   `yaml:"common"`
 	Models  []Model  `yaml:"models"`
@@ -43,62 +54,58 @@ type Model struct {
 type Recipe struct {
 	Name    string `yaml:"name"`
 	Enabled bool   `yaml:"enabled"`
-	Model   string `yaml:"model"` // may be empty -> default model
-	Type    string `yaml:"type"`  // e.g., task/sort, task/changelog
+	Model   string `yaml:"model"`
+	Type    string `yaml:"type"`
 
-	// Inline capture of the rest of fields. We re-marshal into task-specific config.
 	Body map[string]any `yaml:",inline"`
 }
 
-// ------------------ Load & helpers ------------------
+// LoadRoot parses the provided configuration source and validates required fields.
+func LoadRoot(source RootConfigurationSource) (Root, error) {
+	if len(source.Content) == 0 {
+		return Root{}, fmt.Errorf(rootConfigurationEmptyContentErrorFormat, source.Reference)
+	}
 
-func LoadRoot(path string) (Root, error) {
-	var out Root
-	data, err := os.ReadFile(filepath.Clean(path))
-	if err != nil {
-		return Root{}, err
+	var rootConfiguration Root
+	if err := yaml.Unmarshal(source.Content, &rootConfiguration); err != nil {
+		return Root{}, fmt.Errorf(rootConfigurationUnmarshalErrorFormat, source.Reference, err)
 	}
-	if err := yaml.Unmarshal(data, &out); err != nil {
-		return Root{}, err
+
+	if len(rootConfiguration.Models) == 0 {
+		return Root{}, errors.New(emptyModelsErrorMessage)
 	}
-	// Basic validation
-	if len(out.Models) == 0 {
-		return Root{}, errors.New("config.models is empty")
+	if _, ok := rootConfiguration.DefaultModel(); !ok {
+		return Root{}, errors.New(missingDefaultModelErrorMessage)
 	}
-	if _, ok := out.DefaultModel(); !ok {
-		return Root{}, errors.New("no default model found (set models[].default: true)")
-	}
-	return out, nil
+	return rootConfiguration, nil
 }
 
-func (r Root) DefaultModel() (Model, bool) {
-	for _, m := range r.Models {
-		if m.Default {
-			return m, true
+func (root Root) DefaultModel() (Model, bool) {
+	for _, modelConfiguration := range root.Models {
+		if modelConfiguration.Default {
+			return modelConfiguration, true
 		}
 	}
 	return Model{}, false
 }
 
-func (r Root) FindModel(name string) (Model, bool) {
-	for _, m := range r.Models {
-		if m.Name == name {
-			return m, true
+func (root Root) FindModel(name string) (Model, bool) {
+	for _, modelConfiguration := range root.Models {
+		if modelConfiguration.Name == name {
+			return modelConfiguration, true
 		}
 	}
 	return Model{}, false
 }
 
-func (r Root) FindRecipe(name string) (Recipe, bool) {
-	for _, x := range r.Recipes {
-		if x.Name == name {
-			return x, true
+func (root Root) FindRecipe(name string) (Recipe, bool) {
+	for _, recipe := range root.Recipes {
+		if recipe.Name == name {
+			return recipe, true
 		}
 	}
 	return Recipe{}, false
 }
-
-// ------------------ Sort recipe mapping ------------------
 
 type SortYAML struct {
 	Grant struct {
@@ -120,23 +127,21 @@ type SortYAML struct {
 	} `yaml:"thresholds"`
 }
 
-// New provider data for tasks/sort.
-func MapSort(rx Recipe) (SortYAML, error) {
-	var out SortYAML
-	b, err := yaml.Marshal(rx.Body)
-	if err != nil {
-		return out, err
+// MapSort converts a recipe into the SortYAML structure expected by the sort task.
+func MapSort(recipe Recipe) (SortYAML, error) {
+	var sortConfiguration SortYAML
+	encodedRecipeBody, marshalError := yaml.Marshal(recipe.Body)
+	if marshalError != nil {
+		return sortConfiguration, fmt.Errorf(mapSortMarshalErrorFormat, marshalError)
 	}
-	if err := yaml.Unmarshal(b, &out); err != nil {
-		return out, fmt.Errorf("map sort recipe: %w", err)
+	if err := yaml.Unmarshal(encodedRecipeBody, &sortConfiguration); err != nil {
+		return sortConfiguration, fmt.Errorf(mapSortUnmarshalErrorFormat, err)
 	}
-	return out, nil
+	return sortConfiguration, nil
 }
 
-// ------------------ Changelog recipe mapping ------------------
-
 type ChangelogConfig struct {
-	Task string `yaml:"task"` // fixed by task constructor
+	Task string `yaml:"task"`
 	LLM  struct {
 		Model       string  `yaml:"model"`
 		Temperature float64 `yaml:"temperature"`
@@ -178,24 +183,22 @@ type ChangelogConfig struct {
 	} `yaml:"apply"`
 }
 
-func MapChangelog(rx Recipe) (ChangelogConfig, error) {
-	var out ChangelogConfig
-	b, err := yaml.Marshal(rx.Body)
-	if err != nil {
-		return out, err
+// MapChangelog converts a recipe into the changelog task configuration schema.
+func MapChangelog(recipe Recipe) (ChangelogConfig, error) {
+	var changelogConfiguration ChangelogConfig
+	encodedRecipeBody, marshalError := yaml.Marshal(recipe.Body)
+	if marshalError != nil {
+		return changelogConfiguration, marshalError
 	}
-	if err := yaml.Unmarshal(b, &out); err != nil {
-		return out, fmt.Errorf("map changelog recipe: %w", err)
+	if err := yaml.Unmarshal(encodedRecipeBody, &changelogConfiguration); err != nil {
+		return changelogConfiguration, fmt.Errorf(mapChangelogUnmarshalErrorFormat, err)
 	}
-	// Fill minimal task+llm defaults; the runner sets real model & temperature via adapter.
-	out.Task = "changelog"
-	if out.LLM.MaxTokens <= 0 {
-		out.LLM.MaxTokens = 1200
+	changelogConfiguration.Task = changelogTaskName
+	if changelogConfiguration.LLM.MaxTokens <= 0 {
+		changelogConfiguration.LLM.MaxTokens = 1200
 	}
-	return out, nil
+	return changelogConfiguration, nil
 }
-
-// ------------------ Legacy Sort struct + loader (used by tasks/sort) ------------------
 
 type Sort struct {
 	Grant struct {
@@ -217,15 +220,15 @@ type Sort struct {
 	} `yaml:"thresholds"`
 }
 
-// LoadSort keeps compatibility with the file-based provider used by tasks/sort.
+// LoadSort reads a legacy sort configuration file from disk.
 func LoadSort(path string) (Sort, error) {
-	var out Sort
+	var sortConfiguration Sort
 	data, err := os.ReadFile(filepath.Clean(path))
 	if err != nil {
 		return Sort{}, err
 	}
-	if err := yaml.Unmarshal(data, &out); err != nil {
+	if err := yaml.Unmarshal(data, &sortConfiguration); err != nil {
 		return Sort{}, err
 	}
-	return out, nil
+	return sortConfiguration, nil
 }

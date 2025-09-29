@@ -4,8 +4,6 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-
-	"github.com/temirov/llm-tasks/internal/config"
 )
 
 type listCommandOptions struct {
@@ -31,9 +29,9 @@ func newListCommand() *cobra.Command {
 }
 
 func runListCommand(command *cobra.Command, options listCommandOptions) error {
-	rootConfiguration, err := config.LoadRoot(options.configPath)
+	rootConfiguration, err := loadRootConfiguration(options.configPath)
 	if err != nil {
-		return fmt.Errorf("load root configuration %s: %w", options.configPath, err)
+		return err
 	}
 
 	for _, recipe := range rootConfiguration.Recipes {
