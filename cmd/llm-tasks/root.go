@@ -4,7 +4,7 @@ import "github.com/spf13/cobra"
 
 const (
 	rootUse   = "llm-tasks"
-	rootShort = "Unified-config CLI to run LLM tasks"
+	rootShort = "CLI to run LLM tasks"
 )
 
 // NewRootCommand builds the root command for the llm-tasks CLI.
