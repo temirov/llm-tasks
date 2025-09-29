@@ -72,7 +72,7 @@ func (loader RootConfigurationLoader) Load(explicitPath string) (RootConfigurati
 		}
 		content, readError := loader.fileReader(candidate.path)
 		if readError != nil {
-			if candidate.isExplicit && !errors.Is(readError, fs.ErrNotExist) && !errors.Is(readError, fs.ErrPermission) {
+			if candidate.isExplicit && !errors.Is(readError, fs.ErrNotExist) {
 				return RootConfigurationSource{}, fmt.Errorf(explicitConfigurationReadErrorFormat, candidate.path, readError)
 			}
 			continue
