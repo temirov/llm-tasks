@@ -9,11 +9,84 @@ common:
     attempts: 3
     timeout_seconds: 45
 models:
-  - name: default
+  - name: gpt-5-mini
     provider: openai
-    model_id: gpt-4
+    model_id: gpt-5-mini
     default: true
+    supports_temperature: false
+    default_temperature: 1
+    max_completion_tokens: 1500
+
+  - name: gpt-5-pro
+    provider: openai
+    model_id: gpt-5-pro
+    default: false
     supports_temperature: true
     default_temperature: 0.2
-    max_completion_tokens: 4096
-recipes: []
+    max_completion_tokens: 2000
+
+recipes:
+  - name: sort
+    enabled: true
+    model: gpt-5-mini
+    type: task/sort
+    grant:
+      base_directories:
+        downloads: "/media/share/Drive/exchange/Downloads"
+        staging: "/media/share/Drive/exchange/Downloads/_sorted"
+      safety:
+        dry_run: true
+    projects:
+      - name: "3D_Printing"
+        target: "3D_Printing"
+        keywords: ["3mf","stl","obj","mtl","bambu","bambulab","plate","nozzle"]
+      - name: "AI_Art_Assets"
+        target: "AI_Art_Assets"
+        keywords: ["dall·e","forprint","poster","gemini_generated","webp","png"]
+      - name: "Data_CSV"
+        target: "Data_CSV"
+        keywords: ["csv","ghcnd","lcd","sales_tax","zip_locale"]
+    thresholds:
+      min_confidence: 0.6
+
+  - name: changelog
+    enabled: true
+    model: gpt-5-mini
+    type: task/changelog
+    inputs:
+      version:
+        required: true
+        env: CHANGELOG_VERSION
+        default: ""
+      date:
+        required: true
+        env: CHANGELOG_DATE
+        default: ""
+      git_log:
+        required: true
+        source: stdin
+    recipe:
+      system: |
+        Do not invent items. Group under: Highlights, Features ✨, Improvements ⚙️,
+        Docs 📚, CI & Maintenance, and an Upgrade notes line. Keep bullets concise,
+        include PR numbers and SHAs if present. Output valid Markdown only.
+      format:
+        heading: "## [${version}] - ${date}"
+        sections:
+          - title: "Highlights"
+            min: 1
+            max: 3
+          - title: "Features ✨"
+          - title: "Improvements ⚙️"
+          - title: "Docs 📚"
+          - title: "CI & Maintenance"
+        footer: "**Upgrade notes:** No breaking changes."
+      rules:
+        - "Only use information present in the git log."
+        - "Preserve PR numbers and short SHAs in parentheses if present."
+        - "Prefer user-facing value in Highlights; keep 1–3 bullets."
+        - "No placeholders, no commentary, no extra prose."
+    apply:
+      output_path: "./CHANGELOG.md"
+      mode: "prepend"
+      ensure_blank_line: true

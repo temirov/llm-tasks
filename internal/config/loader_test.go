@@ -20,16 +20,20 @@ const (
 	workingLoggingLevel                 = "working-level"
 	homeLoggingLevel                    = "home-level"
 	embeddedLoggingLevel                = "info"
+	embeddedSortRecipeName              = "sort"
+	embeddedChangelogRecipeName         = "changelog"
 	missingExplicitFileName             = "missing.yaml"
 	configurationTemplate               = "common:\n  api:\n    endpoint: %s\n    api_key_env: %s\n  logging:\n    level: %s\n    format: console\n  defaults:\n    attempts: 1\n    timeout_seconds: 2\nmodels:\n  - name: default\n    provider: provider\n    model_id: model\n    default: true\n    supports_temperature: true\n    default_temperature: 0.1\n    max_completion_tokens: 10\nrecipes:\n  - name: sample\n    enabled: true\n    type: task/sort\n"
 	directoryPermissions                = 0o755
 	filePermissions                     = 0o644
+	embeddedRecipeMissingErrorFormat    = "expected recipe %s to be available"
 )
 
 type loaderTestCase struct {
 	name                 string
 	setup                func(t *testing.T, workingDirectory string, homeDirectory string) (string, string)
 	expectedLoggingLevel string
+	expectedRecipeNames  []string
 }
 
 func TestRootConfigurationLoader_Load(t *testing.T) {
@@ -83,6 +87,7 @@ func TestRootConfigurationLoader_Load(t *testing.T) {
 				return "", config.EmbeddedRootConfigurationReference
 			},
 			expectedLoggingLevel: embeddedLoggingLevel,
+			expectedRecipeNames:  []string{embeddedSortRecipeName, embeddedChangelogRecipeName},
 		},
 	}
 
@@ -108,6 +113,11 @@ func TestRootConfigurationLoader_Load(t *testing.T) {
 			}
 			if rootConfiguration.Common.Logging.Level != testCase.expectedLoggingLevel {
 				t.Fatalf("expected logging level %s, got %s", testCase.expectedLoggingLevel, rootConfiguration.Common.Logging.Level)
+			}
+			for _, expectedRecipeName := range testCase.expectedRecipeNames {
+				if _, recipeFound := rootConfiguration.FindRecipe(expectedRecipeName); !recipeFound {
+					t.Fatalf(embeddedRecipeMissingErrorFormat, expectedRecipeName)
+				}
 			}
 		})
 	}
