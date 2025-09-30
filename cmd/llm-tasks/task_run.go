@@ -17,9 +17,13 @@ import (
 
 type pipelineBuilder func(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error)
 
+const (
+	sortRecipeType      = "task/sort"
+	changelogRecipeType = "task/changelog"
+)
+
 var pipelineBuilders = map[string]pipelineBuilder{
-	"task/sort":      buildSortPipeline,
-	"task/changelog": buildChangelogPipeline,
+	sortRecipeType: buildSortPipeline,
 }
 
 func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
@@ -93,7 +97,7 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 		},
 	}
 
-	taskPipeline, builderErr := buildPipeline(rootConfiguration, targetRecipe)
+	taskPipeline, builderErr := buildPipeline(rootConfiguration, targetRecipe, options)
 	if builderErr != nil {
 		return builderErr
 	}
@@ -131,7 +135,23 @@ func resolveModelName(options runCommandOptions, recipe config.Recipe, root conf
 	return ""
 }
 
-func buildPipeline(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error) {
+func buildPipeline(root config.Root, recipe config.Recipe, options runCommandOptions) (pipeline.Pipeline, error) {
+	if recipe.Type == changelogRecipeType {
+		mappedConfig, err := config.MapChangelog(recipe)
+		if err != nil {
+			return nil, fmt.Errorf("map changelog recipe %s: %w", recipe.Name, err)
+		}
+
+		if trimmedVersion := strings.TrimSpace(options.version); trimmedVersion != "" {
+			mappedConfig.Inputs.Version.Default = trimmedVersion
+		}
+		if trimmedDate := strings.TrimSpace(options.releaseDate); trimmedDate != "" {
+			mappedConfig.Inputs.Date.Default = trimmedDate
+		}
+
+		return changelogtask.NewFromConfig(mappedConfig), nil
+	}
+
 	builder, ok := pipelineBuilders[recipe.Type]
 	if !ok {
 		return nil, fmt.Errorf("unknown recipe type: %s", recipe.Type)
@@ -148,12 +168,4 @@ func buildPipeline(root config.Root, recipe config.Recipe) (pipeline.Pipeline, e
 func buildSortPipeline(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error) {
 	provider := sorttask.NewUnifiedProvider(root, recipe.Name)
 	return sorttask.NewWithDeps(sorttask.DefaultFS(), provider), nil
-}
-
-func buildChangelogPipeline(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error) {
-	mappedConfig, err := config.MapChangelog(recipe)
-	if err != nil {
-		return nil, fmt.Errorf("map changelog recipe %s: %w", recipe.Name, err)
-	}
-	return changelogtask.NewFromConfig(changelogtask.Config(mappedConfig)), nil
 }
