@@ -7,11 +7,13 @@ import (
 )
 
 type runCommandOptions struct {
-	configPath    string
-	taskName      string
-	attempts      int
-	timeout       time.Duration
-	modelOverride string
+	configPath       string
+	taskName         string
+	attempts         int
+	timeout          time.Duration
+	modelOverride    string
+	changelogVersion string
+	changelogDate    string
 }
 
 func newRunCommand() *cobra.Command {
@@ -38,6 +40,8 @@ func newRunCommand() *cobra.Command {
 	command.Flags().DurationVar(&options.timeout, timeoutFlagName, 0, timeoutFlagUsage)
 	command.Flags().StringVar(&options.modelOverride, modelFlagName, "", modelFlagUsage)
 	command.Flags().StringVar(&options.configPath, configFlagName, defaultConfigPath, configFlagUsage)
+	command.Flags().StringVar(&options.changelogVersion, changelogVersionFlagName, "", changelogVersionFlagUsage)
+	command.Flags().StringVar(&options.changelogDate, changelogDateFlagName, "", changelogDateFlagUsage)
 
 	return command
 }
