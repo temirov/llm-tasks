@@ -13,6 +13,7 @@ const (
 	sortGrantDownloadsDirectoryKey                  = "grant.base_directories.downloads"
 	sortGrantStagingDirectoryKey                    = "grant.base_directories.staging"
 	sortGrantDirectoryMissingEnvironmentErrorFormat = "resolve %s: missing environment variable(s): %s"
+	sortGrantDirectoryBlankErrorFormat              = "resolve %s: expanded value is blank"
 )
 
 type environmentLookupFunc func(string) (string, bool)
@@ -38,6 +39,9 @@ func resolveSortGrantDirectory(rawValue string, configurationKey string, lookup 
 	expandedValue, missingVariables := expandEnvironmentVariables(rawValue, lookup)
 	if len(missingVariables) > 0 {
 		return "", fmt.Errorf(sortGrantDirectoryMissingEnvironmentErrorFormat, configurationKey, strings.Join(missingVariables, ", "))
+	}
+	if strings.TrimSpace(expandedValue) == "" {
+		return "", fmt.Errorf(sortGrantDirectoryBlankErrorFormat, configurationKey)
 	}
 	return expandedValue, nil
 }
