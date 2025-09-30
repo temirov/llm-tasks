@@ -23,6 +23,8 @@ const (
 	changelogVersionFlagUsage                    = "Changelog version metadata (exported to CHANGELOG_VERSION)"
 	changelogDateFlagName                        = "date"
 	changelogDateFlagUsage                       = "Changelog date metadata (exported to CHANGELOG_DATE)"
+	changelogRecipeName                          = "changelog"
+	changelogVersionRequiredSuffix               = "(required)"
 	listCommandUse                               = "list"
 	listCommandShort                             = "List recipes from config.yaml (enabled by default)"
 	enabledStateLabel                            = "enabled"

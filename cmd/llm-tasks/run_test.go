@@ -22,6 +22,8 @@ const (
 	changelogDateEnvName           = "CHANGELOG_DATE"
 	changelogGitLogSample          = "commit 123 Added feature\n"
 	changelogApplySummaryPrefix    = "prepended changelog to"
+	changelogVersionHelpBaseline   = "Changelog version metadata (exported to CHANGELOG_VERSION)"
+	changelogVersionRequiredSuffix = "(required)"
 	changelogConfigTemplate        = `common:
   api:
     endpoint: %s
@@ -88,6 +90,55 @@ type chatCompletionResponsePayload struct {
 			Content string `json:"content"`
 		} `json:"message"`
 	} `json:"choices"`
+}
+
+func TestRunCommandHelpAnnotatesChangelogRequirement(testingT *testing.T) {
+	testCases := []struct {
+		name           string
+		arguments      []string
+		expectRequired bool
+	}{
+		{
+			name:           "PositionalArgument",
+			arguments:      []string{"run", "changelog", "--help"},
+			expectRequired: true,
+		},
+		{
+			name:           "NameFlagArgument",
+			arguments:      []string{"run", "--name", "changelog", "--help"},
+			expectRequired: true,
+		},
+		{
+			name:           "OtherRecipe",
+			arguments:      []string{"run", "--help"},
+			expectRequired: false,
+		},
+	}
+
+	for _, testCase := range testCases {
+		testCase := testCase
+		testingT.Run(testCase.name, func(subTestT *testing.T) {
+			rootCommand := llmtasks.NewRootCommand()
+			outputBuffer := bytes.Buffer{}
+			rootCommand.SetOut(&outputBuffer)
+			rootCommand.SetErr(&outputBuffer)
+			rootCommand.SetArgs(testCase.arguments)
+
+			executionErr := rootCommand.Execute()
+			if executionErr != nil {
+				subTestT.Fatalf("execute command: %v", executionErr)
+			}
+
+			helpOutput := outputBuffer.String()
+			containsRequired := strings.Contains(helpOutput, changelogVersionHelpBaseline+" "+changelogVersionRequiredSuffix)
+			if containsRequired != testCase.expectRequired {
+				if testCase.expectRequired {
+					subTestT.Fatalf("expected changelog help output to mark version flag required, got: %s", helpOutput)
+				}
+				subTestT.Fatalf("expected non-changelog help output to omit required marker, got: %s", helpOutput)
+			}
+		})
+	}
 }
 
 func TestRunCommandChangelogMetadataInjection(testingT *testing.T) {
