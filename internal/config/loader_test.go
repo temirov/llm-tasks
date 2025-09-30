@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/temirov/llm-tasks/internal/config"
@@ -153,6 +154,65 @@ func TestRootConfigurationLoader_Load(t *testing.T) {
 						t.Fatalf(unexpectedSortGrantPathFormat, directoryKey, expectedPath, actualPath)
 					}
 				}
+			}
+		})
+	}
+}
+
+func TestRootConfigurationLoader_Load_UnreadableCandidates(t *testing.T) {
+	testCases := []struct {
+		name  string
+		setup func(t *testing.T, workingDirectory string, homeDirectory string) (string, string)
+	}{
+		{
+			name: "explicit configuration path unreadable",
+			setup: func(t *testing.T, workingDirectory string, homeDirectory string) (string, string) {
+				t.Helper()
+				configurationDirectory := filepath.Join(workingDirectory, explicitConfigurationFileName)
+				if err := os.MkdirAll(configurationDirectory, directoryPermissions); err != nil {
+					t.Fatalf("create explicit configuration directory: %v", err)
+				}
+				return configurationDirectory, configurationDirectory
+			},
+		},
+		{
+			name: "working directory configuration unreadable",
+			setup: func(t *testing.T, workingDirectory string, homeDirectory string) (string, string) {
+				t.Helper()
+				configurationDirectory := filepath.Join(workingDirectory, workingDirectoryConfigurationName)
+				if err := os.MkdirAll(configurationDirectory, directoryPermissions); err != nil {
+					t.Fatalf("create working configuration directory: %v", err)
+				}
+				return "", filepath.Join(workingDirectory, workingDirectoryConfigurationName)
+			},
+		},
+		{
+			name: "home directory configuration unreadable",
+			setup: func(t *testing.T, workingDirectory string, homeDirectory string) (string, string) {
+				t.Helper()
+				configurationDirectory := filepath.Join(homeDirectory, homeDirectoryName, homeConfigurationFileName)
+				if err := os.MkdirAll(configurationDirectory, directoryPermissions); err != nil {
+					t.Fatalf("create home configuration directory: %v", err)
+				}
+				return "", filepath.Join(homeDirectory, homeDirectoryName, homeConfigurationFileName)
+			},
+		},
+	}
+
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			workingDirectory := t.TempDir()
+			homeDirectory := t.TempDir()
+
+			loader := config.NewRootConfigurationLoader(workingDirectory, homeDirectory)
+			explicitPath, expectedReference := testCase.setup(t, workingDirectory, homeDirectory)
+
+			_, loadErr := loader.Load(explicitPath)
+			if loadErr == nil {
+				t.Fatalf("expected load error for unreadable configuration candidate")
+			}
+			if !strings.Contains(loadErr.Error(), expectedReference) {
+				t.Fatalf("expected load error to reference %s, got %v", expectedReference, loadErr)
 			}
 		})
 	}
