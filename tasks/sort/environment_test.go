@@ -64,6 +64,30 @@ func TestResolveSortGrantBaseDirectories(t *testing.T) {
 				return sortConfiguration
 			}(),
 		},
+		{
+			name: "returns error when downloads directory literal is blank",
+			source: func() config.Sort {
+				var sortConfiguration config.Sort
+				sortConfiguration.Grant.BaseDirectories.Downloads = "   "
+				sortConfiguration.Grant.BaseDirectories.Staging = "/opt/staging"
+				return sortConfiguration
+			}(),
+			environmentValues:   map[string]string{},
+			expectedErrorSubstr: sortGrantDownloadsDirectoryKey,
+		},
+		{
+			name: "returns error when downloads directory expansion is blank",
+			source: func() config.Sort {
+				var sortConfiguration config.Sort
+				sortConfiguration.Grant.BaseDirectories.Downloads = "${EMPTY_DOWNLOADS_DIR}"
+				sortConfiguration.Grant.BaseDirectories.Staging = "/opt/staging"
+				return sortConfiguration
+			}(),
+			environmentValues: map[string]string{
+				"EMPTY_DOWNLOADS_DIR": "  ",
+			},
+			expectedErrorSubstr: sortGrantDownloadsDirectoryKey,
+		},
 	}
 
 	for _, testCase := range testCases {
