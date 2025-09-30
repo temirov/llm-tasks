@@ -107,6 +107,8 @@ Optional flags:
 * `--model` override recipe’s model by name
 * `--attempts` max refine attempts (default from config)
 * `--timeout` per-attempt timeout
+* `--version` changelog release version (exports to `CHANGELOG_VERSION`)
+* `--date` changelog release date (exports to `CHANGELOG_DATE`)
 * `--dry` dry-run mode (for tasks that support it)
 
 ### Example: changelog
@@ -122,6 +124,8 @@ git log --oneline --no-merges HEAD~20..HEAD > /tmp/git.log
   --date 2025-09-27 \
   < /tmp/git.log
 ```
+
+The `--version` and `--date` flags export their values to the `CHANGELOG_VERSION` and `CHANGELOG_DATE` environment variables so the changelog pipeline receives release metadata automatically.
 
 ### Example: sort
 

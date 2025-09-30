@@ -18,8 +18,8 @@ import (
 type pipelineBuilder func(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error)
 
 var pipelineBuilders = map[string]pipelineBuilder{
-	"task/sort":      buildSortPipeline,
-	"task/changelog": buildChangelogPipeline,
+	sortRecipeType:      buildSortPipeline,
+	changelogRecipeType: buildChangelogPipeline,
 }
 
 func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
@@ -31,6 +31,29 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 	targetRecipe, recipeFound := rootConfiguration.FindRecipe(options.taskName)
 	if !recipeFound || !targetRecipe.Enabled {
 		return fmt.Errorf("unknown or disabled recipe %q", options.taskName)
+	}
+
+	var mappedChangelogConfig *config.ChangelogConfig
+	if targetRecipe.Type == changelogRecipeType {
+		changelogConfig, mapErr := config.MapChangelog(targetRecipe)
+		if mapErr != nil {
+			return fmt.Errorf("map changelog recipe %s: %w", targetRecipe.Name, mapErr)
+		}
+		mappedChangelogConfig = &changelogConfig
+
+		trimmedVersion := strings.TrimSpace(options.changelogVersion)
+		if trimmedVersion != "" && strings.TrimSpace(changelogConfig.Inputs.Version.Env) != "" {
+			if setErr := os.Setenv(changelogConfig.Inputs.Version.Env, trimmedVersion); setErr != nil {
+				return fmt.Errorf(setEnvironmentVariableErrorFormat, changelogConfig.Inputs.Version.Env, setErr)
+			}
+		}
+
+		trimmedDate := strings.TrimSpace(options.changelogDate)
+		if trimmedDate != "" && strings.TrimSpace(changelogConfig.Inputs.Date.Env) != "" {
+			if setErr := os.Setenv(changelogConfig.Inputs.Date.Env, trimmedDate); setErr != nil {
+				return fmt.Errorf(setEnvironmentVariableErrorFormat, changelogConfig.Inputs.Date.Env, setErr)
+			}
+		}
 	}
 
 	selectedModelName := resolveModelName(options, targetRecipe, rootConfiguration)
@@ -93,7 +116,7 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 		},
 	}
 
-	taskPipeline, builderErr := buildPipeline(rootConfiguration, targetRecipe)
+	taskPipeline, builderErr := buildPipeline(rootConfiguration, targetRecipe, mappedChangelogConfig)
 	if builderErr != nil {
 		return builderErr
 	}
@@ -131,7 +154,11 @@ func resolveModelName(options runCommandOptions, recipe config.Recipe, root conf
 	return ""
 }
 
-func buildPipeline(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error) {
+func buildPipeline(root config.Root, recipe config.Recipe, mappedChangelogConfig *config.ChangelogConfig) (pipeline.Pipeline, error) {
+	if mappedChangelogConfig != nil && recipe.Type == changelogRecipeType {
+		return changelogtask.NewFromConfig(changelogtask.Config(*mappedChangelogConfig)), nil
+	}
+
 	builder, ok := pipelineBuilders[recipe.Type]
 	if !ok {
 		return nil, fmt.Errorf("unknown recipe type: %s", recipe.Type)
