@@ -14,6 +14,7 @@ const (
 	// EmbeddedRootConfigurationReference identifies the embedded fallback configuration source.
 	EmbeddedRootConfigurationReference          = embeddedRootConfigurationReference
 	explicitConfigurationReadErrorFormat        = "read explicit configuration %s: %w"
+	candidateConfigurationReadErrorFormat       = "read configuration %s: %w"
 	loaderInitializationWorkingDirectoryError   = "determine working directory: %w"
 	loaderHomeEnvironmentVariableName           = "HOME"
 	workingDirectoryConfigurationFileName       = "config.yaml"
@@ -72,10 +73,13 @@ func (loader RootConfigurationLoader) Load(explicitPath string) (RootConfigurati
 		}
 		content, readError := loader.fileReader(candidate.path)
 		if readError != nil {
-			if candidate.isExplicit && !errors.Is(readError, fs.ErrNotExist) {
+			if errors.Is(readError, fs.ErrNotExist) {
+				continue
+			}
+			if candidate.isExplicit {
 				return RootConfigurationSource{}, fmt.Errorf(explicitConfigurationReadErrorFormat, candidate.path, readError)
 			}
-			continue
+			return RootConfigurationSource{}, fmt.Errorf(candidateConfigurationReadErrorFormat, candidate.path, readError)
 		}
 		return RootConfigurationSource{Reference: candidate.path, Content: content}, nil
 	}
