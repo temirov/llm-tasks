@@ -1,14 +1,19 @@
 package llmtasks
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
 
 	"github.com/temirov/llm-tasks/internal/config"
+	"github.com/temirov/llm-tasks/internal/gitcontext"
 	"github.com/temirov/llm-tasks/internal/llm"
 	"github.com/temirov/llm-tasks/internal/pipeline"
 	changelogtask "github.com/temirov/llm-tasks/tasks/changelog"
@@ -34,27 +39,31 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 	}
 
 	var mappedChangelogConfig *config.ChangelogConfig
+	var changelogCleanup func()
 	if targetRecipe.Type == changelogRecipeType {
 		changelogConfig, mapErr := config.MapChangelog(targetRecipe)
 		if mapErr != nil {
 			return fmt.Errorf("map changelog recipe %s: %w", targetRecipe.Name, mapErr)
 		}
+		inputs, prepareErr := prepareChangelogInputs(command.Context(), options, changelogConfig)
+		if prepareErr != nil {
+			return prepareErr
+		}
+		if err := applyChangelogEnvironment(changelogConfig, inputs); err != nil {
+			return err
+		}
+		cleanup, injectErr := injectChangelogContext(inputs.GitContext)
+		if injectErr != nil {
+			return injectErr
+		}
+		changelogCleanup = cleanup
 		mappedChangelogConfig = &changelogConfig
-
-		trimmedVersion := strings.TrimSpace(options.changelogVersion)
-		if trimmedVersion != "" && strings.TrimSpace(changelogConfig.Inputs.Version.Env) != "" {
-			if setErr := os.Setenv(changelogConfig.Inputs.Version.Env, trimmedVersion); setErr != nil {
-				return fmt.Errorf(setEnvironmentVariableErrorFormat, changelogConfig.Inputs.Version.Env, setErr)
-			}
-		}
-
-		trimmedDate := strings.TrimSpace(options.changelogDate)
-		if trimmedDate != "" && strings.TrimSpace(changelogConfig.Inputs.Date.Env) != "" {
-			if setErr := os.Setenv(changelogConfig.Inputs.Date.Env, trimmedDate); setErr != nil {
-				return fmt.Errorf(setEnvironmentVariableErrorFormat, changelogConfig.Inputs.Date.Env, setErr)
-			}
-		}
 	}
+	defer func() {
+		if changelogCleanup != nil {
+			changelogCleanup()
+		}
+	}()
 
 	selectedModelName := resolveModelName(options, targetRecipe, rootConfiguration)
 	modelConfiguration, modelFound := rootConfiguration.FindModel(selectedModelName)
@@ -183,4 +192,118 @@ func buildChangelogPipeline(root config.Root, recipe config.Recipe) (pipeline.Pi
 		return nil, fmt.Errorf("map changelog recipe %s: %w", recipe.Name, err)
 	}
 	return changelogtask.NewFromConfig(changelogtask.Config(mappedConfig)), nil
+}
+
+type changelogExecutionInputs struct {
+	Version    string
+	Date       string
+	GitContext string
+}
+
+func prepareChangelogInputs(ctx context.Context, options runCommandOptions, cfg config.ChangelogConfig) (changelogExecutionInputs, error) {
+	versionFlag := strings.TrimSpace(options.changelogVersion)
+	dateFlag := strings.TrimSpace(options.changelogDate)
+	if versionFlag != "" && dateFlag != "" {
+		return changelogExecutionInputs{}, fmt.Errorf(changelogMutuallyExclusiveFlagsErrorMessage)
+	}
+
+	collector := gitcontext.NewCollector()
+	result, err := collector.Collect(ctx, gitcontext.Options{
+		ExplicitVersion: versionFlag,
+		ExplicitDate:    dateFlag,
+	})
+	if err != nil {
+		if errors.Is(err, gitcontext.ErrDateAndVersionProvided) {
+			return changelogExecutionInputs{}, fmt.Errorf(changelogMutuallyExclusiveFlagsErrorMessage)
+		}
+		if errors.Is(err, gitcontext.ErrStartingPointUnavailable) {
+			return changelogExecutionInputs{}, fmt.Errorf(changelogStartingPointRequiredErrorMessage)
+		}
+		if errors.Is(err, gitcontext.ErrNoCommitsInRange) {
+			return changelogExecutionInputs{}, fmt.Errorf(changelogNoCommitsErrorFormat, err)
+		}
+		return changelogExecutionInputs{}, fmt.Errorf(changelogContextCollectionErrorFormat, err)
+	}
+
+	releaseVersion := strings.TrimSpace(versionFlag)
+	if releaseVersion == "" {
+		releaseVersion = strings.TrimSpace(cfg.Inputs.Version.Default)
+	}
+	if releaseVersion == "" {
+		derived := deriveNextVersion(strings.TrimSpace(result.BaseRef))
+		if derived != "" {
+			releaseVersion = derived
+		}
+	}
+	if releaseVersion == "" {
+		releaseVersion = changelogDefaultVersionLabel
+	}
+
+	releaseDate := dateFlag
+	if releaseDate == "" {
+		releaseDate = strings.TrimSpace(cfg.Inputs.Date.Default)
+	}
+	if releaseDate == "" {
+		releaseDate = time.Now().UTC().Format(time.DateOnly)
+	}
+
+	return changelogExecutionInputs{
+		Version:    releaseVersion,
+		Date:       releaseDate,
+		GitContext: result.Context,
+	}, nil
+}
+
+func applyChangelogEnvironment(cfg config.ChangelogConfig, inputs changelogExecutionInputs) error {
+	versionEnv := strings.TrimSpace(cfg.Inputs.Version.Env)
+	if versionEnv != "" {
+		if setErr := os.Setenv(versionEnv, inputs.Version); setErr != nil {
+			return fmt.Errorf(setEnvironmentVariableErrorFormat, versionEnv, setErr)
+		}
+	}
+	dateEnv := strings.TrimSpace(cfg.Inputs.Date.Env)
+	if dateEnv != "" {
+		if setErr := os.Setenv(dateEnv, inputs.Date); setErr != nil {
+			return fmt.Errorf(setEnvironmentVariableErrorFormat, dateEnv, setErr)
+		}
+	}
+	return nil
+}
+
+func injectChangelogContext(contextPayload string) (func(), error) {
+	reader, writer, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		return nil, fmt.Errorf(changelogContextPipeErrorFormat, pipeErr)
+	}
+	go func() {
+		_, _ = io.WriteString(writer, contextPayload)
+		_ = writer.Close()
+	}()
+	originalStdin := os.Stdin
+	os.Stdin = reader
+	return func() {
+		_ = reader.Close()
+		os.Stdin = originalStdin
+	}, nil
+}
+
+func deriveNextVersion(baseRef string) string {
+	trimmed := strings.TrimSpace(baseRef)
+	if trimmed == "" {
+		return ""
+	}
+	if !strings.HasPrefix(trimmed, "v") {
+		return ""
+	}
+	parts := strings.Split(strings.TrimPrefix(trimmed, "v"), ".")
+	if len(parts) != 3 {
+		return ""
+	}
+	major, errMajor := strconv.Atoi(parts[0])
+	minor, errMinor := strconv.Atoi(parts[1])
+	patch, errPatch := strconv.Atoi(parts[2])
+	if errMajor != nil || errMinor != nil || errPatch != nil {
+		return ""
+	}
+	return fmt.Sprintf("v%d.%d.%d", major, minor, patch+1)
 }

@@ -133,6 +133,20 @@ func (t *Task) Prompt(ctx context.Context, _ pipeline.GatherOutput) (pipeline.LL
 // 3) Verify
 func (t *Task) Verify(ctx context.Context, _ pipeline.GatherOutput, response pipeline.LLMResponse) (bool, pipeline.VerifiedOutput, *pipeline.RefineRequest, error) {
 	md := strings.TrimSpace(response.RawText)
+	if md == "" {
+		fallback, ok := t.buildFallbackSection()
+		if ok {
+			t.section = fallback
+			return true, fallback, nil, nil
+		}
+		return false, nil, &pipeline.RefineRequest{
+			UserPromptDelta: fmt.Sprintf("Return a fully formatted changelog starting with %q", strings.TrimSpace(expandTemplate(t.cfg.Recipe.Format.Heading, map[string]string{
+				"version": t.version,
+				"date":    t.date,
+			}))),
+			Reason: "empty-response",
+		}, nil
+	}
 
 	// No code fences
 	if strings.Contains(md, "```") {
@@ -179,6 +193,117 @@ func (t *Task) Verify(ctx context.Context, _ pipeline.GatherOutput, response pip
 
 	t.section = md
 	return true, md, nil, nil
+}
+
+func (t *Task) buildFallbackSection() (string, bool) {
+	commitMessages := extractCommitMessages(t.gitLog)
+	if len(commitMessages) == 0 {
+		return "", false
+	}
+	sectionBuckets := map[string][]string{}
+	for _, section := range t.cfg.Recipe.Format.Sections {
+		sectionBuckets[section.Title] = []string{}
+	}
+	sectionOrder := make([]string, 0, len(t.cfg.Recipe.Format.Sections))
+	for _, section := range t.cfg.Recipe.Format.Sections {
+		sectionOrder = append(sectionOrder, section.Title)
+	}
+
+	for idx, message := range commitMessages {
+		target := classifyCommit(sectionOrder, message)
+		sectionBuckets[target] = append(sectionBuckets[target], message)
+		if idx == 0 && len(sectionBuckets[sectionOrder[0]]) == 0 {
+			sectionBuckets[sectionOrder[0]] = append(sectionBuckets[sectionOrder[0]], message)
+		}
+	}
+
+	if len(sectionBuckets[sectionOrder[0]]) == 0 {
+		sectionBuckets[sectionOrder[0]] = append(sectionBuckets[sectionOrder[0]], commitMessages[0])
+	}
+
+	head := expandTemplate(t.cfg.Recipe.Format.Heading, map[string]string{
+		"version": t.version,
+		"date":    t.date,
+	})
+	var builder strings.Builder
+	builder.WriteString(strings.TrimSpace(head))
+	builder.WriteString("\n\n")
+	for _, section := range sectionOrder {
+		builder.WriteString("### ")
+		builder.WriteString(section)
+		builder.WriteString("\n\n")
+		bullets := sectionBuckets[section]
+		if len(bullets) == 0 {
+			builder.WriteString("- _No updates._\n\n")
+			continue
+		}
+		for _, bullet := range bullets {
+			builder.WriteString("- ")
+			builder.WriteString(bullet)
+			builder.WriteString("\n")
+		}
+		builder.WriteString("\n")
+	}
+	footer := strings.TrimSpace(t.cfg.Recipe.Format.Footer)
+	if footer != "" {
+		builder.WriteString(footer)
+		builder.WriteString("\n")
+	}
+	return strings.TrimSpace(builder.String()), true
+}
+
+func extractCommitMessages(gitContext string) []string {
+	lines := strings.Split(gitContext, "\n")
+	var commits []string
+	inCommits := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Diff ") {
+			break
+		}
+		if strings.HasPrefix(trimmed, "Commits ") {
+			inCommits = true
+			continue
+		}
+		if !inCommits {
+			continue
+		}
+		if trimmed == "" {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) < 2 {
+			continue
+		}
+		message := strings.Join(fields[1:], " ")
+		commits = append(commits, message)
+	}
+	return commits
+}
+
+func classifyCommit(sectionOrder []string, message string) string {
+	lower := strings.ToLower(message)
+	for _, section := range sectionOrder {
+		switch section {
+		case "Features ✨":
+			if strings.Contains(lower, "feat") || strings.Contains(lower, "feature") {
+				return section
+			}
+		case "Improvements ⚙️":
+			if strings.Contains(lower, "fix") || strings.Contains(lower, "bug") || strings.Contains(lower, "improve") {
+				return section
+			}
+		case "Docs 📚":
+			if strings.Contains(lower, "doc") || strings.Contains(lower, "readme") {
+				return section
+			}
+		case "CI & Maintenance":
+			if strings.Contains(lower, "ci") || strings.Contains(lower, "refactor") || strings.Contains(lower, "maintenance") || strings.Contains(lower, "chore") {
+				return section
+			}
+		}
+	}
+	return sectionOrder[0]
 }
 
 // 4) Apply: prepend to CHANGELOG.md or print

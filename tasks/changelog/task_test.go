@@ -222,3 +222,37 @@ func TestChangelog_Verify_RefinesOnMissingSection(t *testing.T) {
 		t.Fatalf("expected refine for missing section, got ok=%v refine=%v", ok, refine)
 	}
 }
+
+func TestChangelog_FallbackWhenLLMReturnsEmpty(t *testing.T) {
+	tmp := withWorkdir(t)
+	absOut := filepath.Join(tmp, "CHANGELOG.md")
+	cfg := strings.ReplaceAll(cfgYAML, `output_path: "./CHANGELOG.md"`, `output_path: "`+absOut+`"`)
+	cfgPath := withTempFile(t, "task.changelog.yaml", cfg)
+	setEnv(t, "CHANGELOG_VERSION", "1.2.3")
+	setEnv(t, "CHANGELOG_DATE", "2025-01-05")
+	restore := withStdin(t, "Commits v0.1.0..HEAD:\n58e06a8 feat: add API\n07a7c2b docs: update README\n")
+	defer restore()
+
+	task, err := changelog.NewFromYAML(cfgPath)
+	if err != nil {
+		t.Fatalf("NewFromYAML: %v", err)
+	}
+	if _, err := task.Gather(context.Background()); err != nil {
+		t.Fatalf("gather: %v", err)
+	}
+
+	accepted, output, _, err := task.Verify(context.Background(), nil, pipeline.LLMResponse{RawText: ""})
+	if err != nil {
+		t.Fatalf("verify: %v", err)
+	}
+	if !accepted {
+		t.Fatalf("expected fallback verification to accept output")
+	}
+	fallback := output.(string)
+	if !strings.Contains(fallback, "## [1.2.3] - 2025-01-05") {
+		t.Fatalf("expected fallback to include heading, got %s", fallback)
+	}
+	if !strings.Contains(fallback, "feat: add API") {
+		t.Fatalf("expected fallback to carry commit message, got %s", fallback)
+	}
+}

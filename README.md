@@ -107,25 +107,26 @@ Optional flags:
 * `--model` override recipe’s model by name
 * `--attempts` max refine attempts (default from config)
 * `--timeout` per-attempt timeout
-* `--version` changelog release version (exports to `CHANGELOG_VERSION`)
-* `--date` changelog release date (exports to `CHANGELOG_DATE`)
+* `--version` changelog release label and starting reference (mutually exclusive with `--date`; exports to `CHANGELOG_VERSION`)
+* `--date` changelog release date and git cutoff (mutually exclusive with `--version`; exports to `CHANGELOG_DATE`)
 * `--dry` dry-run mode (for tasks that support it)
 
 ### Example: changelog
 
-Summarize recent commits into release notes:
+Summarize recent commits into release notes without piping logs. The command assembles commit messages and diffs automatically:
 
 ```bash
-git log --oneline --no-merges HEAD~20..HEAD > /tmp/git.log
-
-./llm-tasks run changelog \
-  --config ./config.yaml \
-  --version v0.1.0 \
-  --date 2025-09-27 \
-  < /tmp/git.log
+./llm-tasks run changelog --config ./config.yaml
 ```
 
-The `--version` and `--date` flags export their values to the `CHANGELOG_VERSION` and `CHANGELOG_DATE` environment variables so the changelog pipeline receives release metadata automatically.
+If no semantic version tag exists (or you want to define the starting point explicitly), provide either a version tag or an ISO-8601 date:
+
+```bash
+./llm-tasks run changelog --config ./config.yaml --version v0.9.0
+./llm-tasks run changelog --config ./config.yaml --date 2025-09-27T00:00:00Z
+```
+
+`--version` and `--date` are mutually exclusive. They also populate the `CHANGELOG_VERSION` and `CHANGELOG_DATE` environment variables so the changelog pipeline receives release metadata automatically. When you omit both flags the CLI bumps the most recent `vX.Y.Z` tag to the next patch version and uses today’s UTC date.
 
 ### Example: sort
 
