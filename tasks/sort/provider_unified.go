@@ -9,7 +9,6 @@ import (
 type UnifiedSortConfigProvider struct {
 	root   config.Root
 	recipe config.Recipe
-	loaded *config.SortYAML
 }
 
 func NewUnifiedProvider(root config.Root, recipeName string) SortConfigProvider {
@@ -21,7 +20,6 @@ func NewUnifiedProvider(root config.Root, recipeName string) SortConfigProvider 
 }
 
 func (u *UnifiedSortConfigProvider) Load() (config.Sort, error) {
-	// Map unified recipe body into a Sort config (legacy struct reused by task)
 	sy, err := config.MapSort(u.recipe)
 	if err != nil {
 		return config.Sort{}, err
@@ -37,10 +35,9 @@ func (u *UnifiedSortConfigProvider) Load() (config.Sort, error) {
 			Keywords []string `yaml:"keywords"`
 		}{Name: p.Name, Target: p.Target, Keywords: p.Keywords})
 	}
-	out.Thresholds.MinConfidence = sy.Thresholds.MinConfidence
-	resolvedSortConfiguration, resolutionError := resolveSortGrantBaseDirectories(out, lookupEnvironmentVariable)
-	if resolutionError != nil {
-		return config.Sort{}, resolutionError
+	resolved, err := resolveSortGrantBaseDirectories(out)
+	if err != nil {
+		return config.Sort{}, err
 	}
-	return resolvedSortConfiguration, nil
+	return resolved, nil
 }

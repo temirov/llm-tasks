@@ -103,24 +103,28 @@ type repositorySetup struct {
 
 func TestRunCommandHelpAnnotatesChangelogRequirement(testingT *testing.T) {
 	testCases := []struct {
-		name           string
-		arguments      []string
-		expectRequired bool
+		name              string
+		arguments         []string
+		expectRequired    bool
+		expectVersionFlag bool
 	}{
 		{
-			name:           "PositionalArgument",
-			arguments:      []string{"run", "changelog", "--help"},
-			expectRequired: true,
+			name:              "PositionalArgument",
+			arguments:         []string{"run", "changelog", "--help"},
+			expectRequired:    true,
+			expectVersionFlag: true,
 		},
 		{
-			name:           "NameFlagArgument",
-			arguments:      []string{"run", "--name", "changelog", "--help"},
-			expectRequired: true,
+			name:              "NameFlagArgument",
+			arguments:         []string{"run", "--name", "changelog", "--help"},
+			expectRequired:    true,
+			expectVersionFlag: true,
 		},
 		{
-			name:           "OtherRecipe",
-			arguments:      []string{"run", "--help"},
-			expectRequired: false,
+			name:              "OtherRecipe",
+			arguments:         []string{"run", "--help"},
+			expectRequired:    false,
+			expectVersionFlag: false,
 		},
 	}
 
@@ -141,6 +145,12 @@ func TestRunCommandHelpAnnotatesChangelogRequirement(testingT *testing.T) {
 			helpOutput := outputBuffer.String()
 			hasBaseline := strings.Contains(helpOutput, changelogVersionHelpBaseline)
 			hasSuffix := strings.Contains(helpOutput, changelogVersionRequiredSuffix)
+			if hasBaseline != testCase.expectVersionFlag {
+				if testCase.expectVersionFlag {
+					subTestT.Fatalf("expected help output to include version flag, got: %s", helpOutput)
+				}
+				subTestT.Fatalf("expected help output to hide version flag, got: %s", helpOutput)
+			}
 			containsRequired := hasBaseline && hasSuffix
 			if containsRequired != testCase.expectRequired {
 				if testCase.expectRequired {
@@ -149,6 +159,27 @@ func TestRunCommandHelpAnnotatesChangelogRequirement(testingT *testing.T) {
 				subTestT.Fatalf("expected non-changelog help output to omit annotation, got: %s", helpOutput)
 			}
 		})
+	}
+}
+
+func TestRunCommandSortHelpShowsInputs(testingT *testing.T) {
+	rootCommand := llmtasks.NewRootCommand()
+	var outputBuffer bytes.Buffer
+	rootCommand.SetOut(&outputBuffer)
+	rootCommand.SetErr(&outputBuffer)
+	rootCommand.SetArgs([]string{"run", "sort", "--help"})
+
+	executionErr := rootCommand.Execute()
+	if executionErr != nil {
+		testingT.Fatalf("execute command: %v", executionErr)
+	}
+
+	helpOutput := outputBuffer.String()
+	if !strings.Contains(helpOutput, "--source") {
+		testingT.Fatalf("expected help output to list --source, got: %s", helpOutput)
+	}
+	if !strings.Contains(helpOutput, "--destination") {
+		testingT.Fatalf("expected help output to list --destination, got: %s", helpOutput)
 	}
 }
 

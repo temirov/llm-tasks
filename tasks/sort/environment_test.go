@@ -1,7 +1,9 @@
 package sort
 
 import (
-	"reflect"
+	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -9,114 +11,71 @@ import (
 )
 
 func TestResolveSortGrantBaseDirectories(t *testing.T) {
-	testCases := []struct {
-		name                string
-		source              config.Sort
-		environmentValues   map[string]string
-		expected            config.Sort
-		expectedErrorSubstr string
-	}{
-		{
-			name: "expands placeholders when environment variables are set",
-			source: func() config.Sort {
-				var sortConfiguration config.Sort
-				sortConfiguration.Grant.BaseDirectories.Downloads = "${SORT_DOWNLOADS_DIR}/incoming"
-				sortConfiguration.Grant.BaseDirectories.Staging = "${SORT_STAGING_DIR}"
-				return sortConfiguration
-			}(),
-			environmentValues: map[string]string{
-				"SORT_DOWNLOADS_DIR": "/var/downloads",
-				"SORT_STAGING_DIR":   "/var/staging",
-			},
-			expected: func() config.Sort {
-				var sortConfiguration config.Sort
-				sortConfiguration.Grant.BaseDirectories.Downloads = "/var/downloads/incoming"
-				sortConfiguration.Grant.BaseDirectories.Staging = "/var/staging"
-				return sortConfiguration
-			}(),
-		},
-		{
-			name: "returns error when required environment variable is missing",
-			source: func() config.Sort {
-				var sortConfiguration config.Sort
-				sortConfiguration.Grant.BaseDirectories.Downloads = "${SORT_DOWNLOADS_DIR}"
-				sortConfiguration.Grant.BaseDirectories.Staging = "${SORT_STAGING_DIR}"
-				return sortConfiguration
-			}(),
-			environmentValues: map[string]string{
-				"SORT_STAGING_DIR": "/tmp/staging",
-			},
-			expectedErrorSubstr: "SORT_DOWNLOADS_DIR",
-		},
-		{
-			name: "leaves literal paths unchanged when no placeholders provided",
-			source: func() config.Sort {
-				var sortConfiguration config.Sort
-				sortConfiguration.Grant.BaseDirectories.Downloads = "/opt/downloads"
-				sortConfiguration.Grant.BaseDirectories.Staging = "/opt/staging"
-				return sortConfiguration
-			}(),
-			environmentValues: map[string]string{},
-			expected: func() config.Sort {
-				var sortConfiguration config.Sort
-				sortConfiguration.Grant.BaseDirectories.Downloads = "/opt/downloads"
-				sortConfiguration.Grant.BaseDirectories.Staging = "/opt/staging"
-				return sortConfiguration
-			}(),
-		},
-		{
-			name: "returns error when downloads directory literal is blank",
-			source: func() config.Sort {
-				var sortConfiguration config.Sort
-				sortConfiguration.Grant.BaseDirectories.Downloads = "   "
-				sortConfiguration.Grant.BaseDirectories.Staging = "/opt/staging"
-				return sortConfiguration
-			}(),
-			environmentValues:   map[string]string{},
-			expectedErrorSubstr: sortGrantDownloadsDirectoryKey,
-		},
-		{
-			name: "returns error when downloads directory expansion is blank",
-			source: func() config.Sort {
-				var sortConfiguration config.Sort
-				sortConfiguration.Grant.BaseDirectories.Downloads = "${EMPTY_DOWNLOADS_DIR}"
-				sortConfiguration.Grant.BaseDirectories.Staging = "/opt/staging"
-				return sortConfiguration
-			}(),
-			environmentValues: map[string]string{
-				"EMPTY_DOWNLOADS_DIR": "  ",
-			},
-			expectedErrorSubstr: sortGrantDownloadsDirectoryKey,
-		},
+	tempDownloads := t.TempDir()
+	tempDestination := t.TempDir()
+
+	source := config.Sort{}
+	source.Grant.BaseDirectories.Downloads = tempDownloads
+	source.Grant.BaseDirectories.Staging = tempDestination
+
+	resolved, err := resolveSortGrantBaseDirectories(source)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if resolved.Grant.BaseDirectories.Downloads != filepath.Clean(tempDownloads) {
+		t.Fatalf("expected downloads %s, got %s", filepath.Clean(tempDownloads), resolved.Grant.BaseDirectories.Downloads)
+	}
+	if resolved.Grant.BaseDirectories.Staging != filepath.Clean(tempDestination) {
+		t.Fatalf("expected staging %s, got %s", filepath.Clean(tempDestination), resolved.Grant.BaseDirectories.Staging)
+	}
+}
+
+func TestResolveSortGrantBaseDirectoriesExpandsTilde(t *testing.T) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		t.Skip("home directory unavailable")
 	}
 
-	for _, testCase := range testCases {
-		t.Run(testCase.name, func(t *testing.T) {
-			lookup := func(variableName string) (string, bool) {
-				if testCase.environmentValues == nil {
-					return "", false
-				}
-				value, exists := testCase.environmentValues[variableName]
-				return value, exists
-			}
+	source := config.Sort{}
+	source.Grant.BaseDirectories.Downloads = filepath.Join("~", "Downloads")
+	source.Grant.BaseDirectories.Staging = filepath.Join(home, "Sorted")
 
-			resolved, err := resolveSortGrantBaseDirectories(testCase.source, lookup)
-			if testCase.expectedErrorSubstr != "" {
-				if err == nil {
-					t.Fatalf("expected error containing %q, got nil", testCase.expectedErrorSubstr)
-				}
-				if !strings.Contains(err.Error(), testCase.expectedErrorSubstr) {
-					t.Fatalf("error %q does not contain expected substring %q", err.Error(), testCase.expectedErrorSubstr)
-				}
-				return
-			}
+	resolved, err := resolveSortGrantBaseDirectories(source)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	expectedDownloads := filepath.Join(home, "Downloads")
+	if resolved.Grant.BaseDirectories.Downloads != expectedDownloads {
+		t.Fatalf("expected downloads %s, got %s", expectedDownloads, resolved.Grant.BaseDirectories.Downloads)
+	}
+}
 
-			if err != nil {
-				t.Fatalf("unexpected error: %v", err)
-			}
-			if !reflect.DeepEqual(resolved, testCase.expected) {
-				t.Fatalf("resolved configuration mismatch\nexpected: %#v\nactual: %#v", testCase.expected, resolved)
-			}
-		})
+func TestResolveSortGrantBaseDirectoriesRejectsEnvReferences(t *testing.T) {
+	source := config.Sort{}
+	source.Grant.BaseDirectories.Downloads = "${SORT_DOWNLOADS_DIR}"
+	source.Grant.BaseDirectories.Staging = "/tmp/staging"
+
+	_, err := resolveSortGrantBaseDirectories(source)
+	expected := fmt.Sprintf(sortGrantDirectoryEnvUnsupportedFormat, sortGrantDownloadsDirectoryKey)
+	if err == nil || !strings.Contains(err.Error(), expected) {
+		t.Fatalf("expected env reference error, got %v", err)
+	}
+}
+
+func TestResolveSortGrantBaseDirectoriesRejectsBlank(t *testing.T) {
+	source := config.Sort{}
+	source.Grant.BaseDirectories.Downloads = "  "
+	source.Grant.BaseDirectories.Staging = "/tmp/staging"
+
+	_, err := resolveSortGrantBaseDirectories(source)
+	if err == nil || !strings.Contains(err.Error(), sortGrantDownloadsDirectoryKey) {
+		t.Fatalf("expected blank error, got %v", err)
+	}
+}
+
+func TestValidateBaseDirectoriesRejectsIdentical(t *testing.T) {
+	base := t.TempDir()
+	if err := validateBaseDirectories(base, base); err == nil {
+		t.Fatalf("expected error when directories are identical")
 	}
 }

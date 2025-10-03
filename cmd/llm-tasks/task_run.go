@@ -57,6 +57,9 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 			return injectErr
 		}
 		changelogCleanup = cleanup
+		if options.dryRunSet && options.dryRun {
+			changelogConfig.Apply.Mode = "print"
+		}
 		mappedChangelogConfig = &changelogConfig
 	}
 	defer func() {
@@ -100,13 +103,7 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 		SupportsTemperature: modelConfiguration.SupportsTemperature,
 	}
 
-	effectiveAttempts := rootConfiguration.Common.Defaults.Attempts
-	if options.attempts > 0 {
-		effectiveAttempts = options.attempts
-	}
-	if effectiveAttempts <= 0 {
-		effectiveAttempts = 3
-	}
+	effectiveAttempts := resolveEffectiveAttempts(command, options, rootConfiguration)
 
 	effectiveTimeout := time.Duration(rootConfiguration.Common.Defaults.TimeoutSeconds) * time.Second
 	if options.timeout > 0 {
@@ -116,11 +113,16 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 		effectiveTimeout = 45 * time.Second
 	}
 
+	effectiveDryRun := false
+	if options.dryRunSet {
+		effectiveDryRun = options.dryRun
+	}
+
 	runner := pipeline.Runner{
 		Client: adapter,
 		Options: pipeline.RunOptions{
 			MaxAttempts: effectiveAttempts,
-			DryRun:      false,
+			DryRun:      effectiveDryRun,
 			Timeout:     effectiveTimeout,
 		},
 	}
@@ -131,6 +133,28 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 	}
 
 	executionContext := command.Context()
+	if targetRecipe.Type == sortRecipeType {
+		sortTask, ok := taskPipeline.(*sorttask.Task)
+		if !ok {
+			return fmt.Errorf("unexpected sort pipeline type %T", taskPipeline)
+		}
+		sourceOverride := strings.TrimSpace(options.sortSource)
+		destinationOverride := strings.TrimSpace(options.sortDestination)
+		if err := sortTask.SetBaseDirectories(sourceOverride, destinationOverride); err != nil {
+			return err
+		}
+		if options.dryRunSet {
+			sortTask.SetDryRunOverride(options.dryRun)
+		}
+		report, batchedErr := sorttask.RunBatches(executionContext, runner, sortTask, sorttask.DefaultBatchSize)
+		if batchedErr != nil {
+			return fmt.Errorf("run pipeline %s: %w", targetRecipe.Name, batchedErr)
+		}
+		if _, writeErr := fmt.Fprintf(command.OutOrStdout(), "%s (actions=%d, dry=%v)\n", report.Summary, report.NumActions, report.DryRun); writeErr != nil {
+			return fmt.Errorf("write run result: %w", writeErr)
+		}
+		return nil
+	}
 	report, runErr := runner.Run(executionContext, taskPipeline)
 	if runErr != nil {
 		return fmt.Errorf("run pipeline %s: %w", targetRecipe.Name, runErr)

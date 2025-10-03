@@ -13,7 +13,12 @@ func loadRootConfiguration(configurationPath string) (config.Root, error) {
 	}
 	configurationSource, sourceErr := configurationLoader.Load(configurationPath)
 	if sourceErr != nil {
-		return config.Root{}, fmt.Errorf(configurationSourceResolutionErrorFormat, sourceErr)
+		if configurationPath == "" || configurationPath == defaultConfigPath {
+			configurationSource, sourceErr = configurationLoader.Load("")
+		}
+		if sourceErr != nil {
+			return config.Root{}, fmt.Errorf(configurationSourceResolutionErrorFormat, sourceErr)
+		}
 	}
 	rootConfiguration, loadErr := config.LoadRoot(configurationSource)
 	if loadErr != nil {

@@ -4,7 +4,7 @@ const (
 	defaultConfigPath                            = "./config.yaml"
 	defaultTaskName                              = "sort"
 	runCommandUse                                = "run [RECIPE]"
-	runCommandShort                              = "Run a registered LLM task (pipeline)"
+	runCommandShort                              = "Run a registered LLM task"
 	runCommandArgsMin                            = 0
 	runCommandArgsMax                            = 1
 	configFlagName                               = "config"
@@ -14,9 +14,11 @@ const (
 	taskNameFlagName                             = "name"
 	taskNameFlagUsage                            = "Recipe name to run (from config.yaml)"
 	attemptsFlagName                             = "attempts"
-	attemptsFlagUsage                            = "Max refine attempts (0 = use defaults)"
+	attemptsFlagUsage                            = "Max refine attempts (omit flag to use defaults; 0 = single attempt)"
 	timeoutFlagName                              = "timeout"
 	timeoutFlagUsage                             = "Per-attempt timeout (e.g., 45s; 0 = use defaults)"
+	dryRunFlagName                               = "dry-run"
+	dryRunFlagUsage                              = "Execute without applying side effects"
 	modelFlagName                                = "model"
 	modelFlagUsage                               = "Override recipe's model by name (must exist in models[])"
 	changelogVersionFlagName                     = "version"

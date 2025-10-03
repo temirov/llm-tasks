@@ -11,7 +11,7 @@ func (t *Task) applyMovePlan(plan MovePlan) (pipeline.ApplyReport, error) {
 	count := 0
 	for _, a := range plan.Actions {
 		if plan.DryRun {
-			fmt.Printf("[DRY] %s -> %s (%.2f) %s\n", a.FromPath, a.ToPath, a.Confidence, a.Reason)
+			fmt.Printf("[DRY] %s -> %s (project=%s file=%s)\n", a.FromPath, a.ToPath, a.ProjectName, a.FileName)
 			count++
 			continue
 		}
@@ -22,7 +22,7 @@ func (t *Task) applyMovePlan(plan MovePlan) (pipeline.ApplyReport, error) {
 		if err := t.fs.MoveFile(a.FromPath, dest); err != nil {
 			return pipeline.ApplyReport{}, err
 		}
-		fmt.Printf("[MOVE] %s -> %s (%.2f)\n", a.FromPath, dest, a.Confidence)
+		fmt.Printf("[MOVE] %s -> %s (project=%s)\n", a.FromPath, dest, a.ProjectName)
 		count++
 	}
 	return pipeline.ApplyReport{

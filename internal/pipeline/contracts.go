@@ -2,6 +2,9 @@ package pipeline
 
 import "context"
 
+// SortedFilesSchemaName describes the canonical identifier for the sort task response schema.
+const SortedFilesSchemaName = "sorted_files"
+
 type Pipeline interface {
 	Name() string
 	Gather(ctx context.Context) (GatherOutput, error)

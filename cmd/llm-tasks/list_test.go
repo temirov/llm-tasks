@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -98,5 +99,35 @@ func TestRootListCommand(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestListCommandUsesEmbeddedFallback(t *testing.T) {
+	originalWD, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("getwd: %v", err)
+	}
+	temporaryDir := t.TempDir()
+	if err := os.Chdir(temporaryDir); err != nil {
+		t.Fatalf("chdir to temp dir: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chdir(originalWD) })
+
+	command := NewRootCommand()
+	var buffer bytes.Buffer
+	command.SetOut(&buffer)
+	command.SetErr(&buffer)
+	command.SetArgs([]string{"list"})
+
+	if err := command.Execute(); err != nil {
+		t.Fatalf("execute list command with embedded fallback: %v\nstdout:\n%s", err, buffer.String())
+	}
+
+	output := buffer.String()
+	if !strings.Contains(output, "sort") {
+		t.Fatalf("expected embedded sort recipe, got: %s", output)
+	}
+	if !strings.Contains(output, "changelog") {
+		t.Fatalf("expected embedded changelog recipe, got: %s", output)
 	}
 }

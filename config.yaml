@@ -38,15 +38,24 @@ recipes:
       safety:
         dry_run: true
     projects:
-      - name: "3D_Printing"
-        target: "3D_Printing"
-        keywords: ["3mf","stl","obj","mtl","bambu","bambulab","plate","nozzle"]
-      - name: "AI_Art_Assets"
-        target: "AI_Art_Assets"
-        keywords: ["dall·e","forprint","poster","gemini_generated","webp","png"]
-      - name: "Data_CSV"
-        target: "Data_CSV"
-        keywords: ["csv","ghcnd","lcd","sales_tax","zip_locale"]
+      - name: "Projects_3D_Printing"
+        target: "Projects/3D_Printing"
+        keywords: ["3mf","stl","obj","mtl","bambu","bambulab","plate","nozzle","gcode"]
+      - name: "Projects_Websites"
+        target: "Projects/Websites"
+        keywords: ["index.html","favicon","ico","svg","css","js","virtual-gallery","site.json","web","assets/js","assets/css"]
+      - name: "Projects_Codebases"
+        target: "Projects/Codebases"
+        keywords: ["go.mod","go.sum","cmd/","internal/","package.json","cargo.toml","build.gradle","source","pipeline"]
+      - name: "Resources_AI_Art"
+        target: "Resources/AI_Art"
+        keywords: ["dall·e","forprint","poster","gemini_generated","webp","png","concept_art","digital_art"]
+      - name: "Resources_Datasets"
+        target: "Resources/Datasets"
+        keywords: ["csv","dataset","ghcnd","lcd","sales_tax","zip_locale","data.csv","jsonl"]
+      - name: "Knowledge_Documentation"
+        target: "Knowledge/Documentation"
+        keywords: ["readme","docs","guide","manual","notes","tutorial","explanation","journal","meeting"]
     thresholds:
       min_confidence: 0.6
 

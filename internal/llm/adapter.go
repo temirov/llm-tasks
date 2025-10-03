@@ -2,6 +2,7 @@ package llm
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/temirov/llm-tasks/internal/pipeline"
@@ -33,6 +34,18 @@ func (a Adapter) Chat(ctx context.Context, req pipeline.LLMRequest) (pipeline.LL
 		Messages:            []ChatMessage{{Role: "system", Content: strings.TrimSpace(req.SystemPrompt)}, {Role: "user", Content: strings.TrimSpace(req.UserPrompt)}},
 		MaxCompletionTokens: chooseInt(req.MaxTokens, a.DefaultTokens),
 		Temperature:         tempPtr, // omitted if nil
+	}
+
+	if len(strings.TrimSpace(string(req.JSONSchema))) > 0 {
+		schema := json.RawMessage(req.JSONSchema)
+		cr.ResponseFormat = &responseFormat{
+			Type: "json_schema",
+			JSONSchema: &jsonSchemaWrapper{
+				Name:   pipeline.SortedFilesSchemaName,
+				Schema: schema,
+				Strict: true,
+			},
+		}
 	}
 
 	out, err := a.Client.CreateChatCompletion(ctx, cr)
