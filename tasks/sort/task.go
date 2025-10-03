@@ -123,12 +123,21 @@ type promptFile struct {
 
 func (t *Task) Clone() *Task {
 	clone := &Task{
-		fs:               t.fs,
-		cfgProv:          t.cfgProv,
-		completionTokens: t.completionTokens,
+		fs:                t.fs,
+		cfgProv:           t.cfgProv,
+		completionTokens:  t.completionTokens,
+		overrideDownloads: t.overrideDownloads,
+		overrideStaging:   t.overrideStaging,
+		downloadsRoot:     t.downloadsRoot,
+		stagingRoot:       t.stagingRoot,
+		currentDryRun:     t.currentDryRun,
 	}
 	if len(t.preloadedInventory) > 0 {
 		clone.preloadedInventory = append([]FileMeta(nil), t.preloadedInventory...)
+	}
+	if t.dryRunOverride != nil {
+		value := *t.dryRunOverride
+		clone.dryRunOverride = &value
 	}
 	return clone
 }
@@ -250,7 +259,7 @@ Rules:
 - project_name must stay under 60 characters and use letters, numbers, spaces, dashes, or underscores.
 - target_subdir is the relative folder path under the staging root using forward slashes only.
 - Do not introduce extra keys or commentary.
-`, t.currentDownloadsRoot(), t.currentStagingRoot(), t.loadProjectListJSON(), sortedFilesKey, sortedFilesKey, string(filesJSON))
+`, t.currentDownloadsRoot(), t.currentStagingRoot(), t.loadProjectListJSON(), string(filesJSON), sortedFilesKey, sortedFilesKey)
 
 	req := pipeline.LLMRequest{
 		SystemPrompt: system,

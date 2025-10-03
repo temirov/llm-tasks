@@ -4,12 +4,15 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -78,7 +81,10 @@ recipes:
       mode: prepend
       ensure_blank_line: false
 `
-	openAIAPIKeyValue = "test-key"
+	openAIAPIKeyValue       = "test-key"
+	sortedFilesResponseKey  = "sorted_files"
+	cliOverrideProjectName  = "CLI_Override_Project"
+	cliOverrideTargetSubdir = "Overrides/Check"
 )
 
 type chatCompletionRequestPayload struct {
@@ -180,6 +186,187 @@ func TestRunCommandSortHelpShowsInputs(testingT *testing.T) {
 	}
 	if !strings.Contains(helpOutput, "--destination") {
 		testingT.Fatalf("expected help output to list --destination, got: %s", helpOutput)
+	}
+}
+
+func TestRunCommandSortCliOverridesConfig(t *testing.T) {
+	rootWorkingDirectory := t.TempDir()
+	configDownloadsDirectory := filepath.Join(rootWorkingDirectory, "config-downloads")
+	configStagingDirectory := filepath.Join(rootWorkingDirectory, "config-staging")
+	cliDownloadsDirectory := filepath.Join(rootWorkingDirectory, "cli-downloads")
+	cliStagingDirectory := filepath.Join(rootWorkingDirectory, "cli-staging")
+	directoryList := []string{configDownloadsDirectory, configStagingDirectory, cliDownloadsDirectory, cliStagingDirectory}
+	for _, directoryPath := range directoryList {
+		if err := os.MkdirAll(directoryPath, 0o755); err != nil {
+			t.Fatalf("create directory: %v", err)
+		}
+	}
+	configSourceFileName := "config-source.txt"
+	cliSourceFileName := "cli-source.txt"
+	createFile(t, configDownloadsDirectory, configSourceFileName, "config")
+	createFile(t, cliDownloadsDirectory, cliSourceFileName, "cli")
+
+	var requestCounter int64
+	stubServer := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		atomic.AddInt64(&requestCounter, 1)
+		defer func() { _ = request.Body.Close() }()
+		var requestPayload chatCompletionRequestPayload
+		if err := json.NewDecoder(request.Body).Decode(&requestPayload); err != nil {
+			t.Fatalf("decode request payload: %v", err)
+		}
+		if len(requestPayload.Messages) == 0 {
+			t.Fatalf("expected chat completion request to include messages")
+		}
+		userMessage := requestPayload.Messages[len(requestPayload.Messages)-1].Content
+		promptFiles := extractPromptFileMetadata(t, userMessage)
+		if len(promptFiles) != 1 {
+			t.Fatalf("expected exactly one prompt file, got %d", len(promptFiles))
+		}
+		promptFile := promptFiles[0]
+		if promptFile.Name != cliSourceFileName {
+			t.Fatalf("expected CLI file %s, got %s", cliSourceFileName, promptFile.Name)
+		}
+		classificationResults := []map[string]string{
+			{
+				"file_name":     promptFile.Name,
+				"project_name":  cliOverrideProjectName,
+				"target_subdir": cliOverrideTargetSubdir,
+			},
+		}
+		classificationPayload, err := json.Marshal(map[string]any{sortedFilesResponseKey: classificationResults})
+		if err != nil {
+			t.Fatalf("marshal classification payload: %v", err)
+		}
+		responseBody, err := json.Marshal(map[string]any{
+			"choices": []any{
+				map[string]any{
+					"message": map[string]any{
+						"content": string(classificationPayload),
+						"role":    "assistant",
+					},
+					"finish_reason": "stop",
+				},
+			},
+		})
+		if err != nil {
+			t.Fatalf("marshal response payload: %v", err)
+		}
+		writer.Header().Set("Content-Type", "application/json")
+		if _, err := writer.Write(responseBody); err != nil {
+			t.Fatalf("write response body: %v", err)
+		}
+	}))
+	defer stubServer.Close()
+
+	configTemplate := fmt.Sprintf(`common:
+  api:
+    endpoint: %s
+    api_key_env: %s
+  defaults:
+    attempts: 1
+    timeout_seconds: 5
+
+models:
+  - name: stub
+    provider: openai
+    model_id: stub-model
+    default: true
+    supports_temperature: false
+    default_temperature: 0.0
+    max_completion_tokens: 128
+
+recipes:
+  - name: sort
+    enabled: true
+    model: stub
+    type: task/sort
+    grant:
+      base_directories:
+        downloads: %s
+        staging: %s
+      safety:
+        dry_run: true
+    projects:
+      - name: "CLI Override"
+        target: "CLI Override"
+        keywords: ["txt"]
+    thresholds:
+      min_confidence: 0.1
+`, strconv.Quote(stubServer.URL), strconv.Quote(openAIAPIKeyEnvName), strconv.Quote(configDownloadsDirectory), strconv.Quote(configStagingDirectory))
+	configPath := filepath.Join(rootWorkingDirectory, "root-config.yaml")
+	if err := os.WriteFile(configPath, []byte(configTemplate), 0o644); err != nil {
+		t.Fatalf("write config: %v", err)
+	}
+
+	previousAPIKey := os.Getenv(openAIAPIKeyEnvName)
+	if err := os.Setenv(openAIAPIKeyEnvName, openAIAPIKeyValue); err != nil {
+		t.Fatalf("set API key env: %v", err)
+	}
+	t.Cleanup(func() {
+		if strings.TrimSpace(previousAPIKey) == "" {
+			_ = os.Unsetenv(openAIAPIKeyEnvName)
+			return
+		}
+		_ = os.Setenv(openAIAPIKeyEnvName, previousAPIKey)
+	})
+
+	rootCommand := llmtasks.NewRootCommand()
+	var commandOutput bytes.Buffer
+	var commandErrors bytes.Buffer
+	rootCommand.SetOut(&commandOutput)
+	rootCommand.SetErr(&commandErrors)
+	rootCommand.SetArgs([]string{
+		"run",
+		"sort",
+		"--config", configPath,
+		"--source", cliDownloadsDirectory,
+		"--destination", cliStagingDirectory,
+		"--dry-run", "yes",
+	})
+
+	capturedStdout, executeErr := captureStdout(t, func() error {
+		return rootCommand.Execute()
+	})
+	if executeErr != nil {
+		t.Fatalf("execute command: %v (stdout=%s stderr=%s)", executeErr, capturedStdout, commandErrors.String())
+	}
+	if commandErrors.Len() > 0 {
+		t.Fatalf("unexpected stderr output: %s", commandErrors.String())
+	}
+
+	if atomic.LoadInt64(&requestCounter) == 0 {
+		t.Fatalf("expected LLM stub to receive at least one request")
+	}
+
+	if !strings.Contains(commandOutput.String(), "actions=1") {
+		t.Fatalf("expected command output to report one action, got: %s", commandOutput.String())
+	}
+	if !strings.Contains(commandOutput.String(), "dry=true") {
+		t.Fatalf("expected command output to report dry run, got: %s", commandOutput.String())
+	}
+
+	expectedSourcePath := filepath.Join(cliDownloadsDirectory, cliSourceFileName)
+	overrideSubdirComponents := strings.Split(cliOverrideTargetSubdir, "/")
+	destinationComponents := append([]string{cliStagingDirectory}, overrideSubdirComponents...)
+	destinationComponents = append(destinationComponents, cliSourceFileName)
+	expectedDestinationPath := filepath.Join(destinationComponents...)
+	if !strings.Contains(capturedStdout, expectedSourcePath) {
+		t.Fatalf("expected stdout to include source path %s, got: %s", expectedSourcePath, capturedStdout)
+	}
+	if !strings.Contains(capturedStdout, expectedDestinationPath) {
+		t.Fatalf("expected stdout to include destination path %s, got: %s", expectedDestinationPath, capturedStdout)
+	}
+	if !strings.Contains(capturedStdout, cliOverrideProjectName) {
+		t.Fatalf("expected stdout to include project name %s, got: %s", cliOverrideProjectName, capturedStdout)
+	}
+	if strings.Contains(capturedStdout, configDownloadsDirectory) {
+		t.Fatalf("expected stdout to avoid config downloads path, got: %s", capturedStdout)
+	}
+	if strings.Contains(capturedStdout, configStagingDirectory) {
+		t.Fatalf("expected stdout to avoid config staging path, got: %s", capturedStdout)
+	}
+	if strings.Contains(capturedStdout, configSourceFileName) {
+		t.Fatalf("expected stdout to avoid config file name, got: %s", capturedStdout)
 	}
 }
 
@@ -444,6 +631,57 @@ func buildRunArguments(configPath, versionFlag, dateFlag string) []string {
 		arguments = append(arguments, "--"+changelogDateFlagIdentifier, dateFlag)
 	}
 	return arguments
+}
+
+type promptFileMetadata struct {
+	Name string `json:"name"`
+}
+
+func captureStdout(t *testing.T, execute func() error) (string, error) {
+	t.Helper()
+	reader, writer, pipeErr := os.Pipe()
+	if pipeErr != nil {
+		t.Fatalf("create stdout pipe: %v", pipeErr)
+	}
+	originalStdout := os.Stdout
+	os.Stdout = writer
+	executeErr := execute()
+	if closeErr := writer.Close(); closeErr != nil {
+		t.Fatalf("close stdout writer: %v", closeErr)
+	}
+	os.Stdout = originalStdout
+	capturedBytes, readErr := io.ReadAll(reader)
+	if readErr != nil {
+		t.Fatalf("read captured stdout: %v", readErr)
+	}
+	if closeErr := reader.Close(); closeErr != nil {
+		t.Fatalf("close stdout reader: %v", closeErr)
+	}
+	return string(capturedBytes), executeErr
+}
+
+func extractPromptFileMetadata(t *testing.T, userContent string) []promptFileMetadata {
+	t.Helper()
+	metadataMarker := "File metadata (array):"
+	metadataMarkerIndex := strings.Index(userContent, metadataMarker)
+	if metadataMarkerIndex < 0 {
+		t.Fatalf("user prompt missing metadata marker: %s", userContent)
+	}
+	metadataSection := userContent[metadataMarkerIndex+len(metadataMarker):]
+	metadataSection = strings.TrimSpace(metadataSection)
+	sectionParts := strings.SplitN(metadataSection, "\n\nRules:", 2)
+	if len(sectionParts) < 2 {
+		t.Fatalf("user prompt missing rules separator: %s", userContent)
+	}
+	metadataJSON := strings.TrimSpace(sectionParts[0])
+	if metadataJSON == "" {
+		t.Fatalf("user prompt metadata section empty: %s", userContent)
+	}
+	var promptFiles []promptFileMetadata
+	if err := json.Unmarshal([]byte(metadataJSON), &promptFiles); err != nil {
+		t.Fatalf("parse prompt metadata: %v", err)
+	}
+	return promptFiles
 }
 
 func initializeGitRepository(t *testing.T, dir string) {
