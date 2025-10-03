@@ -115,7 +115,7 @@ func (c Client) CreateChatCompletion(ctx context.Context, requestPayload ChatCom
 	trimmed := strings.TrimSpace(content)
 	if trimmed == "" {
 		if strings.EqualFold(strings.TrimSpace(choice.FinishReason), "length") {
-			return "", fmt.Errorf("chat completion returned empty message (status=%d body=%s)", httpResponse.StatusCode, bodyPreview)
+			return "", nil
 		}
 		if refusal := decodeRefusal(choice.Message.Refusal); refusal != "" {
 			return "", fmt.Errorf("chat completion refusal: %s (status=%d body=%s)", refusal, httpResponse.StatusCode, bodyPreview)

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 )
@@ -57,6 +58,16 @@ type Recipe struct {
 	Model   string `yaml:"model"`
 
 	Body map[string]any `yaml:",inline"`
+}
+
+type InputDefinition struct {
+	Name          string   `yaml:"name"`
+	Description   string   `yaml:"description,omitempty"`
+	Required      bool     `yaml:"required"`
+	Type          string   `yaml:"type"`
+	Source        string   `yaml:"source,omitempty"`
+	Default       string   `yaml:"default,omitempty"`
+	ConflictsWith []string `yaml:"conflicts_with,omitempty"`
 }
 
 // LoadRoot parses the provided configuration source and validates required fields.
@@ -146,22 +157,7 @@ type ChangelogConfig struct {
 		Temperature float64 `yaml:"temperature"`
 		MaxTokens   int     `yaml:"max_tokens"`
 	} `yaml:"llm"`
-	Inputs struct {
-		Version struct {
-			Required bool   `yaml:"required"`
-			Env      string `yaml:"env"`
-			Default  string `yaml:"default"`
-		} `yaml:"version"`
-		Date struct {
-			Required bool   `yaml:"required"`
-			Env      string `yaml:"env"`
-			Default  string `yaml:"default"`
-		} `yaml:"date"`
-		GitLog struct {
-			Required bool   `yaml:"required"`
-			Source   string `yaml:"source"`
-		} `yaml:"git_log"`
-	} `yaml:"inputs"`
+	Inputs []InputDefinition `yaml:"inputs"`
 	Recipe struct {
 		System string `yaml:"system"`
 		Format struct {
@@ -195,6 +191,37 @@ func MapChangelog(recipe Recipe) (ChangelogConfig, error) {
 	changelogConfiguration.Task = changelogTaskName
 	if changelogConfiguration.LLM.MaxTokens <= 0 {
 		changelogConfiguration.LLM.MaxTokens = 1200
+	}
+	inputNames := make(map[string]struct{})
+	for index := range changelogConfiguration.Inputs {
+		def := &changelogConfiguration.Inputs[index]
+		def.Name = strings.TrimSpace(def.Name)
+		if def.Name == "" {
+			return ChangelogConfig{}, fmt.Errorf("changelog inputs[%d]: name is required", index)
+		}
+		if _, exists := inputNames[def.Name]; exists {
+			return ChangelogConfig{}, fmt.Errorf("duplicate changelog input name %q", def.Name)
+		}
+		inputNames[def.Name] = struct{}{}
+		def.Type = strings.TrimSpace(strings.ToLower(def.Type))
+		if def.Type == "" {
+			return ChangelogConfig{}, fmt.Errorf("changelog inputs[%s]: type is required", def.Name)
+		}
+		def.Source = strings.TrimSpace(strings.ToLower(def.Source))
+		if def.Source == "" {
+			def.Source = "flag"
+		}
+		if len(def.ConflictsWith) > 0 {
+			normalized := make([]string, 0, len(def.ConflictsWith))
+			for _, conflict := range def.ConflictsWith {
+				trimmed := strings.TrimSpace(strings.ToLower(conflict))
+				if trimmed == "" {
+					continue
+				}
+				normalized = append(normalized, trimmed)
+			}
+			def.ConflictsWith = normalized
+		}
 	}
 	return changelogConfiguration, nil
 }

@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -27,6 +28,7 @@ type Task struct {
 	gitLog  string
 	request pipeline.LLMRequest
 	section string
+	inputs  map[string]string
 }
 
 // New provides a zero-arg factory for CLI registry.
@@ -61,32 +63,67 @@ func NewFromYAML(yamlPath string) (*Task, error) {
 
 func (t *Task) Name() string { return "changelog" }
 
+func (t *Task) SetInputs(values map[string]string) {
+	normalized := make(map[string]string, len(values))
+	for key, value := range values {
+		normalized[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
+	}
+	t.inputs = normalized
+}
+
 // 1) Gather: version, date, git log (stdin)
 func (t *Task) Gather(ctx context.Context) (pipeline.GatherOutput, error) {
-	v := coalesce(os.Getenv(t.cfg.Inputs.Version.Env), t.cfg.Inputs.Version.Default)
-	d := coalesce(os.Getenv(t.cfg.Inputs.Date.Env), t.cfg.Inputs.Date.Default)
+	collected := make(map[string]string)
+	var stdinLoaded bool
+	var stdinValue string
 
-	if t.cfg.Inputs.Version.Required && strings.TrimSpace(v) == "" {
-		return nil, errors.New("version is required (pass --version or set env)")
-	}
-	if t.cfg.Inputs.Date.Required && strings.TrimSpace(d) == "" {
-		return nil, errors.New("date is required (pass --date or set env)")
-	}
+	for _, def := range t.cfg.Inputs {
+		nameKey := strings.ToLower(def.Name)
+		value := strings.TrimSpace(t.inputs[nameKey])
 
-	var gl string
-	if strings.EqualFold(t.cfg.Inputs.GitLog.Source, "stdin") {
-		var buf bytes.Buffer
-		if err := readAllToBufferCtx(ctx, os.Stdin, &buf); err != nil {
-			return nil, fmt.Errorf("reading stdin: %w", err)
+		if strings.EqualFold(def.Source, "stdin") {
+			if !stdinLoaded {
+				var buf bytes.Buffer
+				if err := readAllToBufferCtx(ctx, os.Stdin, &buf); err != nil {
+					return nil, fmt.Errorf("reading stdin: %w", err)
+				}
+				stdinValue = strings.TrimSpace(buf.String())
+				stdinLoaded = true
+			}
+			value = stdinValue
+		} else if value == "" {
+			value = strings.TrimSpace(def.Default)
 		}
-		gl = strings.TrimSpace(buf.String())
-	}
-	if t.cfg.Inputs.GitLog.Required && gl == "" {
-		return nil, errors.New("git_log is required on stdin")
+
+		if def.Required && strings.TrimSpace(value) == "" {
+			return nil, fmt.Errorf("%s is required", def.Name)
+		}
+
+		switch def.Type {
+		case "date":
+			if value != "" {
+				if _, err := time.Parse(time.DateOnly, value); err != nil {
+					return nil, fmt.Errorf("invalid date for %s: %w", def.Name, err)
+				}
+			}
+		}
+
+		collected[nameKey] = value
 	}
 
-	t.version, t.date, t.gitLog = v, d, gl
-	return map[string]string{"version": v, "date": d, "git_log": gl}, nil
+	t.version = strings.TrimSpace(collected["version"])
+	t.date = strings.TrimSpace(collected["date"])
+	t.gitLog = strings.TrimSpace(collected["git_log"])
+	if t.gitLog == "" && stdinLoaded {
+		t.gitLog = stdinValue
+	}
+	t.gitLog = normalizeGitLog(t.gitLog, 2000)
+
+	return map[string]string{
+		"version": t.version,
+		"date":    t.date,
+		"git_log": t.gitLog,
+	}, nil
 }
 
 // 2) Prompt: build system+user prompts from YAML
@@ -394,6 +431,149 @@ func coalesce(a, b string) string {
 		return a
 	}
 	return b
+}
+
+func normalizeGitLog(log string, maxTotalRunes int) string {
+	if maxTotalRunes <= 0 {
+		return strings.TrimSpace(log)
+	}
+	commitPart, diffPart := splitCommitAndDiff(log)
+	commitPart = truncateRunes(strings.TrimSpace(commitPart), maxTotalRunes/2)
+	remaining := maxTotalRunes - len([]rune(commitPart))
+	if remaining <= 0 || strings.TrimSpace(diffPart) == "" {
+		return strings.TrimSpace(commitPart)
+	}
+	summary := summarizeDiff(diffPart, 10, 3)
+	summary = truncateRunes(summary, remaining/3)
+	remaining -= len([]rune(summary))
+	if remaining <= 0 {
+		return strings.TrimSpace(commitPart + "\n\nDiff Summary:\n" + summary)
+	}
+	truncated := truncateRunes(diffPart, remaining)
+	var sb strings.Builder
+	sb.WriteString(commitPart)
+	if summary != "" {
+		sb.WriteString("\n\nDiff Summary:\n")
+		sb.WriteString(summary)
+	}
+	sb.WriteString("\n\nDiff (truncated):\n")
+	sb.WriteString(truncated)
+	return strings.TrimSpace(sb.String())
+}
+
+func splitCommitAndDiff(log string) (string, string) {
+	marker := "\n\nDiff "
+	idx := strings.Index(log, marker)
+	if idx == -1 {
+		return log, ""
+	}
+	return log[:idx], log[idx+2:]
+}
+
+func truncateRunes(text string, maxRunes int) string {
+	runes := []rune(text)
+	if len(runes) <= maxRunes {
+		return strings.TrimSpace(text)
+	}
+	trimmed := string(runes[:maxRunes])
+	if idx := strings.LastIndex(trimmed, "\n"); idx > 0 {
+		trimmed = trimmed[:idx]
+	}
+	return strings.TrimSpace(trimmed) + "\n…"
+}
+
+type diffSummary struct {
+	Path      string
+	Additions int
+	Deletions int
+	Samples   []string
+}
+
+func summarizeDiff(diff string, maxFiles int, maxSamples int) string {
+	scanner := bufio.NewScanner(strings.NewReader(diff))
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	var summaries []diffSummary
+	var current *diffSummary
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "diff --git ") {
+			path := extractPath(line)
+			entry := diffSummary{Path: path}
+			summaries = append(summaries, entry)
+			current = &summaries[len(summaries)-1]
+			continue
+		}
+		if current == nil {
+			continue
+		}
+		if strings.HasPrefix(line, "+++") || strings.HasPrefix(line, "---") {
+			continue
+		}
+		if strings.HasPrefix(line, "@@") {
+			continue
+		}
+		if strings.HasPrefix(line, "+") {
+			current.Additions++
+			if len(current.Samples) < maxSamples {
+				current.Samples = append(current.Samples, strings.TrimSpace(line))
+			}
+			continue
+		}
+		if strings.HasPrefix(line, "-") {
+			current.Deletions++
+			if len(current.Samples) < maxSamples {
+				current.Samples = append(current.Samples, strings.TrimSpace(line))
+			}
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return fmt.Sprintf("Failed to summarize diff: %v", err)
+	}
+	if len(summaries) == 0 {
+		return "No diff available."
+	}
+	originalCount := len(summaries)
+	if maxFiles > 0 && len(summaries) > maxFiles {
+		summaries = summaries[:maxFiles]
+	}
+	var sb strings.Builder
+	for _, entry := range summaries {
+		sb.WriteString(fmt.Sprintf("- %s (Δ+%d/-%d)\n", entry.Path, entry.Additions, entry.Deletions))
+		for _, sample := range entry.Samples {
+			sb.WriteString("    ")
+			sb.WriteString(sample)
+			sb.WriteString("\n")
+		}
+	}
+	if maxFiles > 0 && originalCount > len(summaries) {
+		sb.WriteString(fmt.Sprintf("- … %d additional files\n", originalCount-len(summaries)))
+	}
+	return strings.TrimRight(sb.String(), "\n")
+}
+
+func extractPath(line string) string {
+	parts := strings.Fields(line)
+	if len(parts) < 4 {
+		return line
+	}
+	left := strings.TrimPrefix(parts[2], "a/")
+	right := strings.TrimPrefix(parts[3], "b/")
+	if strings.TrimSpace(right) != "" {
+		return right
+	}
+	return left
+}
+
+func truncateLines(text string, maxLines int) string {
+	if maxLines <= 0 {
+		return strings.TrimSpace(text)
+	}
+	lines := strings.Split(strings.TrimSpace(text), "\n")
+	if len(lines) <= maxLines {
+		return strings.TrimSpace(text)
+	}
+	trimmed := strings.Join(lines[:maxLines], "\n")
+	return strings.TrimSpace(trimmed) + "\n…"
 }
 
 func max1(a, b int) int {

@@ -61,17 +61,20 @@ recipes:
     enabled: true
     model: gpt-5-mini
     inputs:
-      version:
+      - name: version
         required: true
-        env: CHANGELOG_VERSION
+        type: string
         default: ""
-      date:
+        conflicts_with: ["date"]
+      - name: date
         required: true
-        env: CHANGELOG_DATE
+        type: date
         default: ""
-      git_log:
+        conflicts_with: ["version"]
+      - name: git_log
         required: true
         source: stdin
+        type: string
     recipe:
       system: |
         Do not invent items. Group under: Highlights, Features ✨, Improvements ⚙️,

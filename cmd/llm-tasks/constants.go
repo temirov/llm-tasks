@@ -22,9 +22,9 @@ const (
 	modelFlagName                                = "model"
 	modelFlagUsage                               = "Override recipe's model by name (must exist in models[])"
 	changelogVersionFlagName                     = "version"
-	changelogVersionFlagUsage                    = "Changelog version metadata (exported to CHANGELOG_VERSION)"
+	changelogVersionFlagUsage                    = "Changelog release version"
 	changelogDateFlagName                        = "date"
-	changelogDateFlagUsage                       = "Changelog date metadata (exported to CHANGELOG_DATE)"
+	changelogDateFlagUsage                       = "Changelog release date"
 	changelogRecipeName                          = "changelog"
 	changelogVersionRequiredSuffix               = "(mutually exclusive with --date)"
 	changelogDefaultVersionLabel                 = "Unreleased"
@@ -43,5 +43,4 @@ const (
 	configurationLoaderInitializationErrorFormat = "initialize configuration loader: %w"
 	configurationSourceResolutionErrorFormat     = "resolve configuration source: %w"
 	rootConfigurationLoadErrorFormat             = "load root configuration from %s: %w"
-	setEnvironmentVariableErrorFormat            = "set environment variable %s: %w"
 )

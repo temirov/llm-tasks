@@ -39,6 +39,7 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 	}
 
 	var mappedChangelogConfig *config.ChangelogConfig
+	var changelogInputs changelogExecutionInputs
 	var changelogCleanup func()
 	recipeKey := strings.ToLower(strings.TrimSpace(targetRecipe.Name))
 	if recipeKey == changelogRecipeName {
@@ -46,14 +47,12 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 		if mapErr != nil {
 			return fmt.Errorf("map changelog recipe %s: %w", targetRecipe.Name, mapErr)
 		}
-		inputs, prepareErr := prepareChangelogInputs(command.Context(), options, changelogConfig)
+		var prepareErr error
+		changelogInputs, prepareErr = prepareChangelogInputs(command.Context(), options, changelogConfig)
 		if prepareErr != nil {
 			return prepareErr
 		}
-		if err := applyChangelogEnvironment(changelogConfig, inputs); err != nil {
-			return err
-		}
-		cleanup, injectErr := injectChangelogContext(inputs.GitContext)
+		cleanup, injectErr := injectChangelogContext(changelogInputs.GitContext)
 		if injectErr != nil {
 			return injectErr
 		}
@@ -134,6 +133,9 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 	}
 
 	executionContext := command.Context()
+	if chTask, ok := taskPipeline.(*changelogtask.Task); ok {
+		chTask.SetInputs(changelogInputs.Values)
+	}
 	if sortTask, ok := taskPipeline.(*sorttask.Task); ok {
 		sourceOverride := strings.TrimSpace(options.sortSource)
 		destinationOverride := strings.TrimSpace(options.sortDestination)
@@ -217,16 +219,34 @@ func buildChangelogPipeline(root config.Root, recipe config.Recipe) (pipeline.Pi
 }
 
 type changelogExecutionInputs struct {
-	Version    string
-	Date       string
+	Values     map[string]string
 	GitContext string
 }
 
 func prepareChangelogInputs(ctx context.Context, options runCommandOptions, cfg config.ChangelogConfig) (changelogExecutionInputs, error) {
+	definitionByName := map[string]config.InputDefinition{}
+	for _, def := range cfg.Inputs {
+		definitionByName[strings.ToLower(def.Name)] = def
+	}
+
 	versionFlag := strings.TrimSpace(options.changelogVersion)
 	dateFlag := strings.TrimSpace(options.changelogDate)
-	if versionFlag != "" && dateFlag != "" {
-		return changelogExecutionInputs{}, fmt.Errorf(changelogMutuallyExclusiveFlagsErrorMessage)
+
+	versionDef, hasVersion := definitionByName["version"]
+	dateDef, hasDate := definitionByName["date"]
+	gitLogDef, hasGitLog := definitionByName["git_log"]
+	if !hasVersion || !hasDate || !hasGitLog {
+		return changelogExecutionInputs{}, fmt.Errorf("changelog recipe must define inputs for version, date, and git_log")
+	}
+	for _, conflict := range versionDef.ConflictsWith {
+		if conflict == "date" && versionFlag != "" && dateFlag != "" {
+			return changelogExecutionInputs{}, fmt.Errorf(changelogMutuallyExclusiveFlagsErrorMessage)
+		}
+	}
+	for _, conflict := range dateDef.ConflictsWith {
+		if conflict == "version" && versionFlag != "" && dateFlag != "" {
+			return changelogExecutionInputs{}, fmt.Errorf(changelogMutuallyExclusiveFlagsErrorMessage)
+		}
 	}
 
 	collector := gitcontext.NewCollector()
@@ -247,49 +267,57 @@ func prepareChangelogInputs(ctx context.Context, options runCommandOptions, cfg 
 		return changelogExecutionInputs{}, fmt.Errorf(changelogContextCollectionErrorFormat, err)
 	}
 
+	values := make(map[string]string)
+
 	releaseVersion := strings.TrimSpace(versionFlag)
 	if releaseVersion == "" {
-		releaseVersion = strings.TrimSpace(cfg.Inputs.Version.Default)
+		releaseVersion = strings.TrimSpace(versionDef.Default)
 	}
 	if releaseVersion == "" {
-		derived := deriveNextVersion(strings.TrimSpace(result.BaseRef))
-		if derived != "" {
-			releaseVersion = derived
-		}
+		releaseVersion = deriveNextVersion(strings.TrimSpace(result.BaseRef))
 	}
 	if releaseVersion == "" {
 		releaseVersion = changelogDefaultVersionLabel
 	}
+	values["version"] = releaseVersion
 
-	releaseDate := dateFlag
+	releaseDate := strings.TrimSpace(dateFlag)
 	if releaseDate == "" {
-		releaseDate = strings.TrimSpace(cfg.Inputs.Date.Default)
+		releaseDate = strings.TrimSpace(dateDef.Default)
 	}
 	if releaseDate == "" {
 		releaseDate = time.Now().UTC().Format(time.DateOnly)
 	}
+	if dateDef.Type == "date" && releaseDate != "" {
+		normalizedDate, err := normalizeDateInput(releaseDate)
+		if err != nil {
+			return changelogExecutionInputs{}, err
+		}
+		releaseDate = normalizedDate
+	}
+	values["date"] = releaseDate
+
+	if strings.EqualFold(gitLogDef.Source, "stdin") {
+		values["git_log"] = ""
+	}
 
 	return changelogExecutionInputs{
-		Version:    releaseVersion,
-		Date:       releaseDate,
+		Values:     values,
 		GitContext: result.Context,
 	}, nil
 }
 
-func applyChangelogEnvironment(cfg config.ChangelogConfig, inputs changelogExecutionInputs) error {
-	versionEnv := strings.TrimSpace(cfg.Inputs.Version.Env)
-	if versionEnv != "" {
-		if setErr := os.Setenv(versionEnv, inputs.Version); setErr != nil {
-			return fmt.Errorf(setEnvironmentVariableErrorFormat, versionEnv, setErr)
-		}
+func normalizeDateInput(value string) (string, error) {
+	if value == "" {
+		return "", nil
 	}
-	dateEnv := strings.TrimSpace(cfg.Inputs.Date.Env)
-	if dateEnv != "" {
-		if setErr := os.Setenv(dateEnv, inputs.Date); setErr != nil {
-			return fmt.Errorf(setEnvironmentVariableErrorFormat, dateEnv, setErr)
-		}
+	if _, err := time.Parse(time.DateOnly, value); err == nil {
+		return value, nil
 	}
-	return nil
+	if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+		return parsed.UTC().Format(time.DateOnly), nil
+	}
+	return "", fmt.Errorf("invalid date value: %s", value)
 }
 
 func injectChangelogContext(contextPayload string) (func(), error) {

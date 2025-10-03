@@ -105,8 +105,8 @@ Optional flags:
 * `--model` override recipe’s model by name
 * `--attempts` max refine attempts (default from config)
 * `--timeout` per-attempt timeout
-* `--version` changelog release label and starting reference (mutually exclusive with `--date`; exports to `CHANGELOG_VERSION`)
-* `--date` changelog release date and git cutoff (mutually exclusive with `--version`; exports to `CHANGELOG_DATE`)
+* `--version` changelog release label and starting reference (mutually exclusive with `--date`)
+* `--date` changelog release date and git cutoff (mutually exclusive with `--version`)
 * `--dry` dry-run mode (for tasks that support it)
 
 ### Example: changelog
@@ -124,7 +124,7 @@ If no semantic version tag exists (or you want to define the starting point expl
 ./llm-tasks run changelog --config ./config.yaml --date 2025-09-27T00:00:00Z
 ```
 
-`--version` and `--date` are mutually exclusive. They also populate the `CHANGELOG_VERSION` and `CHANGELOG_DATE` environment variables so the changelog pipeline receives release metadata automatically. When you omit both flags the CLI bumps the most recent `vX.Y.Z` tag to the next patch version and uses today’s UTC date.
+`--version` and `--date` are mutually exclusive. When you omit both flags the CLI bumps the most recent `vX.Y.Z` tag to the next patch version and uses today’s UTC date.
 
 ### Example: sort
 

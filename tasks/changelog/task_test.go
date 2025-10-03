@@ -20,9 +20,20 @@ llm:
   temperature: 0.2
   max_tokens: 1200
 inputs:
-  version: { required: true, env: CHANGELOG_VERSION, default: "" }
-  date:    { required: true, env: CHANGELOG_DATE, default: "" }
-  git_log: { required: true, source: stdin }
+  - name: version
+    required: true
+    type: string
+    default: ""
+    conflicts_with: ["date"]
+  - name: date
+    required: true
+    type: date
+    default: ""
+    conflicts_with: ["version"]
+  - name: git_log
+    required: true
+    source: stdin
+    type: string
 recipe:
   system: "Output valid Markdown only."
   format:
@@ -71,21 +82,6 @@ func (m mockLLM) Chat(ctx context.Context, req pipeline.LLMRequest) (pipeline.LL
 	return pipeline.LLMResponse{RawText: m.resp}, nil
 }
 
-func setEnv(t *testing.T, k, v string) {
-	t.Helper()
-	old, had := os.LookupEnv(k)
-	if err := os.Setenv(k, v); err != nil {
-		t.Fatalf("setenv: %v", err)
-	}
-	t.Cleanup(func() {
-		if had {
-			_ = os.Setenv(k, old)
-		} else {
-			_ = os.Unsetenv(k)
-		}
-	})
-}
-
 func withStdin(t *testing.T, s string) func() {
 	t.Helper()
 	old := os.Stdin
@@ -106,9 +102,6 @@ func TestChangelog_HappyPath_Prepend_Sandboxed(t *testing.T) {
 	cfg := strings.ReplaceAll(cfgYAML, `output_path: "./CHANGELOG.md"`, `output_path: "`+absOut+`"`)
 
 	cfgPath := withTempFile(t, "task.changelog.yaml", cfg)
-	setEnv(t, "CHANGELOG_VERSION", "1.2.3")
-	setEnv(t, "CHANGELOG_DATE", "2025-01-05")
-
 	restore := withStdin(t, "feat: add cool thing (#123) abcd123\n")
 	defer restore()
 
@@ -116,6 +109,10 @@ func TestChangelog_HappyPath_Prepend_Sandboxed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFromYAML: %v", err)
 	}
+	task.SetInputs(map[string]string{
+		"version": "1.2.3",
+		"date":    "2025-01-05",
+	})
 
 	// Mock LLM returns a valid section with all configured headings.
 	md := strings.TrimSpace(`
@@ -178,8 +175,6 @@ func TestChangelog_Verify_RefinesOnMissingSection(t *testing.T) {
 	absOut := filepath.Join(tmp, "CHANGELOG.md")
 	cfg := strings.ReplaceAll(cfgYAML, `output_path: "./CHANGELOG.md"`, `output_path: "`+absOut+`"`)
 	cfgPath := withTempFile(t, "task.changelog.yaml", cfg)
-	setEnv(t, "CHANGELOG_VERSION", "0.9.0")
-	setEnv(t, "CHANGELOG_DATE", "2025-02-01")
 	restore := withStdin(t, "fix: stuff\n")
 	defer restore()
 
@@ -187,6 +182,10 @@ func TestChangelog_Verify_RefinesOnMissingSection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFromYAML: %v", err)
 	}
+	task.SetInputs(map[string]string{
+		"version": "0.9.0",
+		"date":    "2025-02-01",
+	})
 
 	// Missing "CI & Maintenance" on purpose
 	md := strings.TrimSpace(`
@@ -228,8 +227,6 @@ func TestChangelog_FallbackWhenLLMReturnsEmpty(t *testing.T) {
 	absOut := filepath.Join(tmp, "CHANGELOG.md")
 	cfg := strings.ReplaceAll(cfgYAML, `output_path: "./CHANGELOG.md"`, `output_path: "`+absOut+`"`)
 	cfgPath := withTempFile(t, "task.changelog.yaml", cfg)
-	setEnv(t, "CHANGELOG_VERSION", "1.2.3")
-	setEnv(t, "CHANGELOG_DATE", "2025-01-05")
 	restore := withStdin(t, "Commits v0.1.0..HEAD:\n58e06a8 feat: add API\n07a7c2b docs: update README\n")
 	defer restore()
 
@@ -237,6 +234,10 @@ func TestChangelog_FallbackWhenLLMReturnsEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewFromYAML: %v", err)
 	}
+	task.SetInputs(map[string]string{
+		"version": "1.2.3",
+		"date":    "2025-01-05",
+	})
 	if _, err := task.Gather(context.Background()); err != nil {
 		t.Fatalf("gather: %v", err)
 	}

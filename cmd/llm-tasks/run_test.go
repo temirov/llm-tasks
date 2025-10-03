@@ -20,18 +20,14 @@ import (
 )
 
 const (
-	changelogVersionFlagIdentifier  = "version"
-	changelogDateFlagIdentifier     = "date"
-	openAIAPIKeyEnvName             = "OPENAI_API_KEY"
-	changelogVersionEnvName         = "CHANGELOG_VERSION"
-	changelogDateEnvName            = "CHANGELOG_DATE"
-	changelogApplySummaryPrefix     = "prepended changelog to"
-	changelogVersionHelpBaseline    = "Changelog version metadata (exported to CHANGELOG_VERSION)"
-	changelogVersionRequiredSuffix  = "(mutually exclusive with --date)"
-	changelogFallbackVersion        = "Unreleased"
-	changelogTemplateDefaultVersion = ""
-	changelogTemplateDefaultDate    = ""
-	changelogConfigTemplate         = `common:
+	changelogVersionFlagIdentifier = "version"
+	changelogDateFlagIdentifier    = "date"
+	openAIAPIKeyEnvName            = "OPENAI_API_KEY"
+	changelogApplySummaryPrefix    = "prepended changelog to"
+	changelogVersionHelpBaseline   = "Changelog release version"
+	changelogVersionRequiredSuffix = "(mutually exclusive with --date)"
+	changelogFallbackVersion       = "Unreleased"
+	changelogConfigTemplate        = `common:
   api:
     endpoint: %s
     api_key_env: OPENAI_API_KEY
@@ -53,17 +49,20 @@ recipes:
     enabled: true
     model: stub
     inputs:
-      version:
+      - name: version
         required: true
-        env: CHANGELOG_VERSION
-        default: "` + changelogTemplateDefaultVersion + `"
-      date:
+        type: string
+        default: ""
+        conflicts_with: ["date"]
+      - name: date
         required: true
-        env: CHANGELOG_DATE
-        default: "` + changelogTemplateDefaultDate + `"
-      git_log:
+        type: date
+        default: ""
+        conflicts_with: ["version"]
+      - name: git_log
         required: true
         source: stdin
+        type: string
     recipe:
       system: "System prompt"
       format:
@@ -447,8 +446,6 @@ func TestRunCommandChangelogMetadataInjection(testingT *testing.T) {
 			}
 
 			subTestT.Setenv(openAIAPIKeyEnvName, openAIAPIKeyValue)
-			subTestT.Setenv(changelogVersionEnvName, "")
-			subTestT.Setenv(changelogDateEnvName, "")
 
 			var serverInteractions struct {
 				prompt string
@@ -463,9 +460,9 @@ func TestRunCommandChangelogMetadataInjection(testingT *testing.T) {
 					subTestT.Fatalf("expected at least two messages, got %d", len(payload.Messages))
 				}
 				serverInteractions.prompt = payload.Messages[1].Content
-				responseHeading := fmt.Sprintf("## [%s] - %s", os.Getenv(changelogVersionEnvName), os.Getenv(changelogDateEnvName))
-				if responseHeading == "## [] - " {
-					subTestT.Fatalf("expected heading data to be set before LLM request")
+				responseHeading := extractHeadingLine(payload.Messages[1].Content)
+				if responseHeading == "" {
+					subTestT.Fatalf("prompt missing heading line: %s", payload.Messages[1].Content)
 				}
 				draft := fmt.Sprintf(`%s
 
@@ -550,26 +547,39 @@ func TestRunCommandChangelogMetadataInjection(testingT *testing.T) {
 				subTestT.Fatalf("expected changelog to contain Highlights heading")
 			}
 
+			headingLine := extractHeadingLine(string(changelogData))
+			if headingLine == "" {
+				subTestT.Fatalf("expected changelog output to contain heading, got %s", string(changelogData))
+			}
+			actualVersion, actualDate, headingErr := parseHeadingLine(headingLine)
+			if headingErr != nil {
+				subTestT.Fatalf("parse heading: %v", headingErr)
+			}
+
 			expectedVersion := testCase.expectedVersion
 			if expectedVersion == "" {
 				expectedVersion = changelogFallbackVersion
 			}
-			if os.Getenv(changelogVersionEnvName) != expectedVersion {
-				subTestT.Fatalf("expected CHANGELOG_VERSION=%s, got %s", expectedVersion, os.Getenv(changelogVersionEnvName))
+			if actualVersion != expectedVersion {
+				subTestT.Fatalf("expected version %s, got %s", expectedVersion, actualVersion)
 			}
 
 			var expectedDate string
 			if testCase.expectTodayDate {
 				expectedDate = time.Now().UTC().Format(time.DateOnly)
 			} else if repoSetup.DateFlag != "" {
-				expectedDate = repoSetup.DateFlag
+				if parsed, err := time.Parse(time.RFC3339, repoSetup.DateFlag); err == nil {
+					expectedDate = parsed.UTC().Format(time.DateOnly)
+				} else {
+					expectedDate = repoSetup.DateFlag
+				}
 			} else if testCase.expectedDate != "" {
 				expectedDate = testCase.expectedDate
 			} else {
 				expectedDate = time.Now().UTC().Format(time.DateOnly)
 			}
-			if os.Getenv(changelogDateEnvName) != expectedDate {
-				subTestT.Fatalf("expected CHANGELOG_DATE=%s, got %s", expectedDate, os.Getenv(changelogDateEnvName))
+			if actualDate != expectedDate {
+				subTestT.Fatalf("expected date %s, got %s", expectedDate, actualDate)
 			}
 
 			if !strings.Contains(serverInteractions.prompt, commitToken) {
@@ -680,6 +690,32 @@ func extractPromptFileMetadata(t *testing.T, userContent string) []promptFileMet
 		t.Fatalf("parse prompt metadata: %v", err)
 	}
 	return promptFiles
+}
+
+func extractHeadingLine(content string) string {
+	lines := strings.Split(content, "\n")
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "## [") {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func parseHeadingLine(line string) (string, string, error) {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "## [") {
+		return "", "", fmt.Errorf("unexpected heading format: %s", line)
+	}
+	remainder := strings.TrimPrefix(trimmed, "## [")
+	parts := strings.SplitN(remainder, "] - ", 2)
+	if len(parts) != 2 {
+		return "", "", fmt.Errorf("unexpected heading format: %s", line)
+	}
+	version := strings.TrimSpace(parts[0])
+	date := strings.TrimSpace(parts[1])
+	return version, date, nil
 }
 
 func initializeGitRepository(t *testing.T, dir string) {
