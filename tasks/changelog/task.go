@@ -29,6 +29,7 @@ type Task struct {
 	request pipeline.LLMRequest
 	section string
 	inputs  map[string]string
+	root    string
 }
 
 // New provides a zero-arg factory for CLI registry.
@@ -58,7 +59,11 @@ func NewFromYAML(yamlPath string) (*Task, error) {
 	if cfg.Task == "" {
 		return nil, errors.New("configs/task.changelog.yaml: task field is required")
 	}
-	return &Task{cfg: cfg}, nil
+	wd, wdErr := os.Getwd()
+	if wdErr != nil {
+		return nil, wdErr
+	}
+	return &Task{cfg: cfg, root: wd}, nil
 }
 
 func (t *Task) Name() string { return "changelog" }
@@ -69,6 +74,30 @@ func (t *Task) SetInputs(values map[string]string) {
 		normalized[strings.ToLower(strings.TrimSpace(key))] = strings.TrimSpace(value)
 	}
 	t.inputs = normalized
+}
+
+func (t *Task) SetRoot(root string) error {
+	trimmed := strings.TrimSpace(root)
+	if trimmed == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return err
+		}
+		trimmed = wd
+	}
+	absPath, err := filepath.Abs(trimmed)
+	if err != nil {
+		return err
+	}
+	info, statErr := os.Stat(absPath)
+	if statErr != nil {
+		return statErr
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("root must be a directory: %s", absPath)
+	}
+	t.root = absPath
+	return nil
 }
 
 // 1) Gather: version, date, git log (stdin)
@@ -117,7 +146,8 @@ func (t *Task) Gather(ctx context.Context) (pipeline.GatherOutput, error) {
 	if t.gitLog == "" && stdinLoaded {
 		t.gitLog = stdinValue
 	}
-	t.gitLog = normalizeGitLog(t.gitLog, 2000)
+	exclude := t.excludedPaths()
+	t.gitLog = normalizeGitLog(t.gitLog, 2000, exclude)
 
 	return map[string]string{
 		"version": t.version,
@@ -352,6 +382,17 @@ func (t *Task) Apply(ctx context.Context, verified pipeline.VerifiedOutput) (pip
 		return pipeline.ApplyReport{DryRun: false, Summary: "printed changelog section", NumActions: 1}, nil
 	case "prepend":
 		path := coalesce(t.cfg.Apply.OutputPath, "./CHANGELOG.md")
+		if !filepath.IsAbs(path) {
+			base := t.root
+			if base == "" {
+				wd, err := os.Getwd()
+				if err != nil {
+					return pipeline.ApplyReport{}, err
+				}
+				base = wd
+			}
+			path = filepath.Join(base, path)
+		}
 		var existing string
 		if b, err := os.ReadFile(filepath.Clean(path)); err == nil {
 			existing = string(b)
@@ -433,11 +474,14 @@ func coalesce(a, b string) string {
 	return b
 }
 
-func normalizeGitLog(log string, maxTotalRunes int) string {
+func normalizeGitLog(log string, maxTotalRunes int, excludePaths []string) string {
 	if maxTotalRunes <= 0 {
 		return strings.TrimSpace(log)
 	}
+	excludeSet := buildExcludeSet(excludePaths)
 	commitPart, diffPart := splitCommitAndDiff(log)
+	commitPart = filterCommitMessages(commitPart, excludeSet)
+	diffPart = filterDiffEntries(diffPart, excludeSet)
 	commitPart = truncateRunes(strings.TrimSpace(commitPart), maxTotalRunes/2)
 	remaining := maxTotalRunes - len([]rune(commitPart))
 	if remaining <= 0 || strings.TrimSpace(diffPart) == "" {
@@ -487,6 +531,86 @@ type diffSummary struct {
 	Additions int
 	Deletions int
 	Samples   []string
+}
+
+func (t *Task) excludedPaths() []string {
+	outputPath := coalesce(t.cfg.Apply.OutputPath, "./CHANGELOG.md")
+	if strings.TrimSpace(outputPath) == "" {
+		outputPath = "CHANGELOG.md"
+	}
+	if filepath.IsAbs(outputPath) {
+		if rel, err := filepath.Rel(t.root, outputPath); err == nil {
+			outputPath = rel
+		}
+	}
+	outputPath = filepath.Clean(outputPath)
+	outputPath = strings.TrimPrefix(outputPath, "./")
+	outputPath = filepath.ToSlash(outputPath)
+	if outputPath == "" {
+		outputPath = "CHANGELOG.md"
+	}
+	return []string{strings.ToLower(outputPath), "changelog.md"}
+}
+
+func buildExcludeSet(paths []string) map[string]struct{} {
+	set := make(map[string]struct{}, len(paths))
+	for _, p := range paths {
+		trimmed := strings.ToLower(strings.TrimSpace(filepath.ToSlash(p)))
+		set[trimmed] = struct{}{}
+	}
+	return set
+}
+
+func filterCommitMessages(commitPart string, exclude map[string]struct{}) string {
+	lines := strings.Split(commitPart, "\n")
+	var filtered []string
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" {
+			continue
+		}
+		lower := strings.ToLower(trimmed)
+		skip := strings.Contains(lower, "changelog")
+		if !skip {
+			for path := range exclude {
+				if strings.Contains(lower, path) {
+					skip = true
+					break
+				}
+			}
+		}
+		if skip {
+			continue
+		}
+		filtered = append(filtered, trimmed)
+	}
+	if len(filtered) == 0 {
+		return strings.TrimSpace(commitPart)
+	}
+	return strings.Join(filtered, "\n")
+}
+
+func filterDiffEntries(diff string, exclude map[string]struct{}) string {
+	scanner := bufio.NewScanner(strings.NewReader(diff))
+	scanner.Buffer(make([]byte, 1024), 1024*1024)
+	var sb strings.Builder
+	include := true
+	for scanner.Scan() {
+		line := scanner.Text()
+		if strings.HasPrefix(line, "diff --git ") {
+			path := strings.ToLower(strings.TrimSpace(filepath.ToSlash(extractPath(line))))
+			_, skip := exclude[path]
+			include = !skip
+		}
+		if include {
+			sb.WriteString(line)
+			sb.WriteString("\n")
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return diff
+	}
+	return strings.TrimRight(sb.String(), "\n")
 }
 
 func summarizeDiff(diff string, maxFiles int, maxSamples int) string {
@@ -562,18 +686,6 @@ func extractPath(line string) string {
 		return right
 	}
 	return left
-}
-
-func truncateLines(text string, maxLines int) string {
-	if maxLines <= 0 {
-		return strings.TrimSpace(text)
-	}
-	lines := strings.Split(strings.TrimSpace(text), "\n")
-	if len(lines) <= maxLines {
-		return strings.TrimSpace(text)
-	}
-	trimmed := strings.Join(lines[:maxLines], "\n")
-	return strings.TrimSpace(trimmed) + "\n…"
 }
 
 func max1(a, b int) int {

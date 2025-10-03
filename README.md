@@ -107,6 +107,7 @@ Optional flags:
 * `--timeout` per-attempt timeout
 * `--version` changelog release label and starting reference (mutually exclusive with `--date`)
 * `--date` changelog release date and git cutoff (mutually exclusive with `--version`)
+* `--root` git repository path to inspect when generating a changelog (defaults to current working directory)
 * `--dry` dry-run mode (for tasks that support it)
 
 ### Example: changelog
@@ -114,7 +115,7 @@ Optional flags:
 Summarize recent commits into release notes without piping logs. The command assembles commit messages and diffs automatically:
 
 ```bash
-./llm-tasks run changelog --config ./config.yaml
+./llm-tasks run changelog --config ./config.yaml --root /path/to/repo
 ```
 
 If no semantic version tag exists (or you want to define the starting point explicitly), provide either a version tag or an ISO-8601 date:

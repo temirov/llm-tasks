@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -41,14 +43,20 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 	var mappedChangelogConfig *config.ChangelogConfig
 	var changelogInputs changelogExecutionInputs
 	var changelogCleanup func()
+	var changelogRoot string
 	recipeKey := strings.ToLower(strings.TrimSpace(targetRecipe.Name))
 	if recipeKey == changelogRecipeName {
+		resolvedRoot, rootErr := resolveGitRoot(options.changelogRoot)
+		if rootErr != nil {
+			return rootErr
+		}
+		changelogRoot = resolvedRoot
 		changelogConfig, mapErr := config.MapChangelog(targetRecipe)
 		if mapErr != nil {
 			return fmt.Errorf("map changelog recipe %s: %w", targetRecipe.Name, mapErr)
 		}
 		var prepareErr error
-		changelogInputs, prepareErr = prepareChangelogInputs(command.Context(), options, changelogConfig)
+		changelogInputs, prepareErr = prepareChangelogInputs(command.Context(), options, changelogConfig, changelogRoot)
 		if prepareErr != nil {
 			return prepareErr
 		}
@@ -135,6 +143,9 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 	executionContext := command.Context()
 	if chTask, ok := taskPipeline.(*changelogtask.Task); ok {
 		chTask.SetInputs(changelogInputs.Values)
+		if err := chTask.SetRoot(changelogRoot); err != nil {
+			return fmt.Errorf("set changelog root: %w", err)
+		}
 	}
 	if sortTask, ok := taskPipeline.(*sorttask.Task); ok {
 		sourceOverride := strings.TrimSpace(options.sortSource)
@@ -218,12 +229,44 @@ func buildChangelogPipeline(root config.Root, recipe config.Recipe) (pipeline.Pi
 	return changelogtask.NewFromConfig(changelogtask.Config(mappedConfig)), nil
 }
 
+func resolveGitRoot(root string) (string, error) {
+	trimmed := strings.TrimSpace(root)
+	if trimmed == "" {
+		cwd, err := os.Getwd()
+		if err != nil {
+			return "", fmt.Errorf("determine working directory: %w", err)
+		}
+		trimmed = cwd
+	}
+	absPath, err := filepath.Abs(trimmed)
+	if err != nil {
+		return "", fmt.Errorf("resolve git root %s: %w", trimmed, err)
+	}
+	info, statErr := os.Stat(absPath)
+	if statErr != nil {
+		return "", fmt.Errorf("git root %s: %w", absPath, statErr)
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("git root must be a directory: %s", absPath)
+	}
+	cmd := exec.Command("git", "rev-parse", "--is-inside-work-tree")
+	cmd.Dir = absPath
+	output, execErr := cmd.CombinedOutput()
+	if execErr != nil {
+		return "", fmt.Errorf("verify git repository %s: %w", absPath, execErr)
+	}
+	if strings.TrimSpace(string(output)) != "true" {
+		return "", fmt.Errorf("path is not a git repository: %s", absPath)
+	}
+	return absPath, nil
+}
+
 type changelogExecutionInputs struct {
 	Values     map[string]string
 	GitContext string
 }
 
-func prepareChangelogInputs(ctx context.Context, options runCommandOptions, cfg config.ChangelogConfig) (changelogExecutionInputs, error) {
+func prepareChangelogInputs(ctx context.Context, options runCommandOptions, cfg config.ChangelogConfig, root string) (changelogExecutionInputs, error) {
 	definitionByName := map[string]config.InputDefinition{}
 	for _, def := range cfg.Inputs {
 		definitionByName[strings.ToLower(def.Name)] = def
@@ -251,6 +294,7 @@ func prepareChangelogInputs(ctx context.Context, options runCommandOptions, cfg 
 
 	collector := gitcontext.NewCollector()
 	result, err := collector.Collect(ctx, gitcontext.Options{
+		WorkingDir:      root,
 		ExplicitVersion: versionFlag,
 		ExplicitDate:    dateFlag,
 	})

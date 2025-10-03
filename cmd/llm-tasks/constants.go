@@ -25,6 +25,8 @@ const (
 	changelogVersionFlagUsage                    = "Changelog release version"
 	changelogDateFlagName                        = "date"
 	changelogDateFlagUsage                       = "Changelog release date"
+	changelogRootFlagName                        = "root"
+	changelogRootFlagUsage                       = "Path to the git repository for changelog collection"
 	changelogRecipeName                          = "changelog"
 	changelogVersionRequiredSuffix               = "(mutually exclusive with --date)"
 	changelogDefaultVersionLabel                 = "Unreleased"

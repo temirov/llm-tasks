@@ -113,6 +113,9 @@ func TestChangelog_HappyPath_Prepend_Sandboxed(t *testing.T) {
 		"version": "1.2.3",
 		"date":    "2025-01-05",
 	})
+	if err := task.SetRoot(tmp); err != nil {
+		t.Fatalf("set root: %v", err)
+	}
 
 	// Mock LLM returns a valid section with all configured headings.
 	md := strings.TrimSpace(`
@@ -186,6 +189,9 @@ func TestChangelog_Verify_RefinesOnMissingSection(t *testing.T) {
 		"version": "0.9.0",
 		"date":    "2025-02-01",
 	})
+	if err := task.SetRoot(tmp); err != nil {
+		t.Fatalf("set root: %v", err)
+	}
 
 	// Missing "CI & Maintenance" on purpose
 	md := strings.TrimSpace(`
@@ -238,6 +244,9 @@ func TestChangelog_FallbackWhenLLMReturnsEmpty(t *testing.T) {
 		"version": "1.2.3",
 		"date":    "2025-01-05",
 	})
+	if err := task.SetRoot(tmp); err != nil {
+		t.Fatalf("set root: %v", err)
+	}
 	if _, err := task.Gather(context.Background()); err != nil {
 		t.Fatalf("gather: %v", err)
 	}

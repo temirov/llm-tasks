@@ -22,6 +22,7 @@ import (
 const (
 	changelogVersionFlagIdentifier = "version"
 	changelogDateFlagIdentifier    = "date"
+	changelogRootFlagIdentifier    = "root"
 	openAIAPIKeyEnvName            = "OPENAI_API_KEY"
 	changelogApplySummaryPrefix    = "prepended changelog to"
 	changelogVersionHelpBaseline   = "Changelog release version"
@@ -111,24 +112,28 @@ func TestRunCommandHelpAnnotatesChangelogRequirement(testingT *testing.T) {
 		arguments         []string
 		expectRequired    bool
 		expectVersionFlag bool
+		expectRootFlag    bool
 	}{
 		{
 			name:              "PositionalArgument",
 			arguments:         []string{"run", "changelog", "--help"},
 			expectRequired:    true,
 			expectVersionFlag: true,
+			expectRootFlag:    true,
 		},
 		{
 			name:              "NameFlagArgument",
 			arguments:         []string{"run", "--name", "changelog", "--help"},
 			expectRequired:    true,
 			expectVersionFlag: true,
+			expectRootFlag:    true,
 		},
 		{
 			name:              "OtherRecipe",
 			arguments:         []string{"run", "--help"},
 			expectRequired:    false,
 			expectVersionFlag: false,
+			expectRootFlag:    false,
 		},
 	}
 
@@ -161,6 +166,10 @@ func TestRunCommandHelpAnnotatesChangelogRequirement(testingT *testing.T) {
 					subTestT.Fatalf("expected changelog help output to annotate version flag, got: %s", helpOutput)
 				}
 				subTestT.Fatalf("expected non-changelog help output to omit annotation, got: %s", helpOutput)
+			}
+			hasRoot := strings.Contains(helpOutput, "--"+changelogRootFlagIdentifier)
+			if hasRoot != testCase.expectRootFlag {
+				subTestT.Fatalf("unexpected presence of root flag: %s", helpOutput)
 			}
 		})
 	}
@@ -525,7 +534,7 @@ func TestRunCommandChangelogMetadataInjection(testingT *testing.T) {
 			subTestT.Cleanup(func() { _ = os.Chdir(originalDir) })
 
 			command := llmtasks.NewRootCommand()
-			command.SetArgs(buildRunArguments(configPath, testCase.versionFlag, dateFlag))
+			command.SetArgs(buildRunArguments(configPath, testCase.versionFlag, dateFlag, repositoryDir))
 			var outputBuffer bytes.Buffer
 			command.SetOut(&outputBuffer)
 			command.SetErr(&outputBuffer)
@@ -630,8 +639,11 @@ func TestRunCommandChangelogFailsWithNoCommits(testingT *testing.T) {
 	}
 }
 
-func buildRunArguments(configPath, versionFlag, dateFlag string) []string {
+func buildRunArguments(configPath, versionFlag, dateFlag, root string) []string {
 	arguments := []string{"run", "changelog", "--config", configPath}
+	if strings.TrimSpace(root) != "" {
+		arguments = append(arguments, "--"+changelogRootFlagIdentifier, root)
+	}
 	if strings.TrimSpace(versionFlag) != "" {
 		arguments = append(arguments, "--"+changelogVersionFlagIdentifier, versionFlag)
 	}

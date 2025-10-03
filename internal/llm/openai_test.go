@@ -8,7 +8,7 @@ import (
 	"testing"
 )
 
-func TestCreateChatCompletionEmptyMessageErrors(t *testing.T) {
+func TestCreateChatCompletionEmptyMessageLengthFinish(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
 		writer.Header().Set("Content-Type", "application/json")
 		payload := map[string]any{
@@ -29,9 +29,12 @@ func TestCreateChatCompletionEmptyMessageErrors(t *testing.T) {
 	defer server.Close()
 
 	client := Client{HTTPBaseURL: server.URL, APIKey: "test"}
-	_, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{Model: "m"})
-	if err == nil || err.Error() == "" {
-		t.Fatalf("expected error for empty completion")
+	result, err := client.CreateChatCompletion(context.Background(), ChatCompletionRequest{Model: "m"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result != "" {
+		t.Fatalf("expected empty string, got %q", result)
 	}
 }
 

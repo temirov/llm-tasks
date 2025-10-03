@@ -26,6 +26,7 @@ type runCommandOptions struct {
 	modelOverride    string
 	changelogVersion string
 	changelogDate    string
+	changelogRoot    string
 	sortSource       string
 	sortDestination  string
 	dryRun           bool
@@ -78,6 +79,7 @@ func newRunCommand() *cobra.Command {
 	command.Flags().StringVar(&options.configPath, configFlagName, defaultConfigPath, configFlagUsage)
 	command.Flags().StringVar(&options.changelogVersion, changelogVersionFlagName, "", changelogVersionFlagUsage)
 	command.Flags().StringVar(&options.changelogDate, changelogDateFlagName, "", changelogDateFlagUsage)
+	command.Flags().StringVar(&options.changelogRoot, changelogRootFlagName, "", changelogRootFlagUsage)
 	command.Flags().StringVar(&options.sortSource, sortSourceFlagName, "", sortSourceFlagUsage)
 	command.Flags().StringVar(&options.sortDestination, sortDestinationFlagName, "", sortDestinationFlagUsage)
 	dryRunValue := newBoolChoiceValue(&options.dryRun)
@@ -171,6 +173,10 @@ func withRecipeVisibility(cmd *cobra.Command, options *runCommandOptions, recipe
 	if dateFlag := cmd.Flags().Lookup(changelogDateFlagName); dateFlag != nil {
 		restore = append(restore, captureHidden(dateFlag))
 		dateFlag.Hidden = !strings.EqualFold(recipe, changelogRecipeName)
+	}
+	if rootFlag := cmd.Flags().Lookup(changelogRootFlagName); rootFlag != nil {
+		restore = append(restore, captureHidden(rootFlag))
+		rootFlag.Hidden = !strings.EqualFold(recipe, changelogRecipeName)
 	}
 	isSort := strings.EqualFold(recipe, defaultTaskName)
 	if sourceFlag := cmd.Flags().Lookup(sortSourceFlagName); sourceFlag != nil {
