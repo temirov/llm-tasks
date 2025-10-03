@@ -30,14 +30,12 @@ recipes:
   - name: changelog
     enabled: true
     model: gpt-5-mini
-    type: task/changelog
     inputs: { }
     recipe: { }
     apply: { }
   - name: sort
     enabled: false
     model: gpt-5-mini
-    type: task/sort
     grant: { }
     projects: [ ]
     thresholds: { }

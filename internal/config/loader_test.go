@@ -24,7 +24,7 @@ const (
 	embeddedSortRecipeName              = "sort"
 	embeddedChangelogRecipeName         = "changelog"
 	missingExplicitFileName             = "missing.yaml"
-	configurationTemplate               = "common:\n  api:\n    endpoint: %s\n    api_key_env: %s\n  logging:\n    level: %s\n    format: console\n  defaults:\n    attempts: 1\n    timeout_seconds: 2\nmodels:\n  - name: default\n    provider: provider\n    model_id: model\n    default: true\n    supports_temperature: true\n    default_temperature: 0.1\n    max_completion_tokens: 10\nrecipes:\n  - name: sample\n    enabled: true\n    type: task/sort\n"
+	configurationTemplate               = "common:\n  api:\n    endpoint: %s\n    api_key_env: %s\n  logging:\n    level: %s\n    format: console\n  defaults:\n    attempts: 1\n    timeout_seconds: 2\nmodels:\n  - name: default\n    provider: provider\n    model_id: model\n    default: true\n    supports_temperature: true\n    default_temperature: 0.1\n    max_completion_tokens: 10\nrecipes:\n  - name: sample\n    enabled: true\n"
 	directoryPermissions                = 0o755
 	filePermissions                     = 0o644
 	embeddedRecipeMissingErrorFormat    = "expected recipe %s to be available"

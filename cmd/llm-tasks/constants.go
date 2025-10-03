@@ -43,7 +43,5 @@ const (
 	configurationLoaderInitializationErrorFormat = "initialize configuration loader: %w"
 	configurationSourceResolutionErrorFormat     = "resolve configuration source: %w"
 	rootConfigurationLoadErrorFormat             = "load root configuration from %s: %w"
-	changelogRecipeType                          = "task/changelog"
-	sortRecipeType                               = "task/sort"
 	setEnvironmentVariableErrorFormat            = "set environment variable %s: %w"
 )

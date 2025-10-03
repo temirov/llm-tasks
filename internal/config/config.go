@@ -55,7 +55,6 @@ type Recipe struct {
 	Name    string `yaml:"name"`
 	Enabled bool   `yaml:"enabled"`
 	Model   string `yaml:"model"`
-	Type    string `yaml:"type"`
 
 	Body map[string]any `yaml:",inline"`
 }

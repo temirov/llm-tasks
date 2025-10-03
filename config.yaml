@@ -30,7 +30,6 @@ recipes:
   - name: sort
     enabled: true
     model: gpt-5-mini            # backref to models[].name
-    type: task/sort
     grant:
       base_directories:
         downloads: "/media/share/Drive/exchange/Downloads"
@@ -62,7 +61,6 @@ recipes:
   - name: changelog
     enabled: true
     model: gpt-5-mini
-    type: task/changelog
     inputs:
       version:
         required: true

@@ -52,7 +52,6 @@ recipes:
   - name: changelog
     enabled: true
     model: stub
-    type: task/changelog
     inputs:
       version:
         required: true
@@ -279,7 +278,6 @@ recipes:
   - name: sort
     enabled: true
     model: stub
-    type: task/sort
     grant:
       base_directories:
         downloads: %s

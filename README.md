@@ -38,12 +38,10 @@ models:
 recipes:
   - name: sort
     enabled: true
-    type: task/sort
     model: gpt-5-mini
     # task-specific keys omitted for brevity
   - name: changelog
     enabled: true
-    type: task/changelog
     model: gpt-5-mini
     # task-specific keys omitted for brevity
 ```
@@ -58,8 +56,8 @@ recipes:
   temperature support.
 
 * **recipes**
-  Array of enabled tasks. Each recipe binds to a model and type (`task/sort`, `task/changelog`, …). Disabled recipes are
-  ignored unless explicitly listed with `--all`.
+  Array of enabled tasks. The recipe `name` selects the task implementation (e.g., `sort`, `changelog`) and binds it to a
+  model. Disabled recipes are ignored unless explicitly listed with `--all`.
 
 ### Embedded defaults
 

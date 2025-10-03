@@ -29,7 +29,6 @@ recipes:
   - name: sort
     enabled: true
     model: gpt-5-mini
-    type: task/sort
     grant:
       base_directories:
         downloads: "${SORT_DOWNLOADS_DIR}"
@@ -61,7 +60,6 @@ recipes:
   - name: changelog
     enabled: true
     model: gpt-5-mini
-    type: task/changelog
     inputs:
       version:
         required: true

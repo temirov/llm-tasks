@@ -23,8 +23,8 @@ import (
 type pipelineBuilder func(root config.Root, recipe config.Recipe) (pipeline.Pipeline, error)
 
 var pipelineBuilders = map[string]pipelineBuilder{
-	sortRecipeType:      buildSortPipeline,
-	changelogRecipeType: buildChangelogPipeline,
+	defaultTaskName:     buildSortPipeline,
+	changelogRecipeName: buildChangelogPipeline,
 }
 
 func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
@@ -40,7 +40,8 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 
 	var mappedChangelogConfig *config.ChangelogConfig
 	var changelogCleanup func()
-	if targetRecipe.Type == changelogRecipeType {
+	recipeKey := strings.ToLower(strings.TrimSpace(targetRecipe.Name))
+	if recipeKey == changelogRecipeName {
 		changelogConfig, mapErr := config.MapChangelog(targetRecipe)
 		if mapErr != nil {
 			return fmt.Errorf("map changelog recipe %s: %w", targetRecipe.Name, mapErr)
@@ -133,11 +134,7 @@ func runTaskCommand(command *cobra.Command, options runCommandOptions) error {
 	}
 
 	executionContext := command.Context()
-	if targetRecipe.Type == sortRecipeType {
-		sortTask, ok := taskPipeline.(*sorttask.Task)
-		if !ok {
-			return fmt.Errorf("unexpected sort pipeline type %T", taskPipeline)
-		}
+	if sortTask, ok := taskPipeline.(*sorttask.Task); ok {
 		sourceOverride := strings.TrimSpace(options.sortSource)
 		destinationOverride := strings.TrimSpace(options.sortDestination)
 		if err := sortTask.SetBaseDirectories(sourceOverride, destinationOverride); err != nil {
@@ -188,13 +185,14 @@ func resolveModelName(options runCommandOptions, recipe config.Recipe, root conf
 }
 
 func buildPipeline(root config.Root, recipe config.Recipe, mappedChangelogConfig *config.ChangelogConfig) (pipeline.Pipeline, error) {
-	if mappedChangelogConfig != nil && recipe.Type == changelogRecipeType {
+	if mappedChangelogConfig != nil && strings.EqualFold(recipe.Name, changelogRecipeName) {
 		return changelogtask.NewFromConfig(changelogtask.Config(*mappedChangelogConfig)), nil
 	}
 
-	builder, ok := pipelineBuilders[recipe.Type]
+	builderKey := strings.ToLower(strings.TrimSpace(recipe.Name))
+	builder, ok := pipelineBuilders[builderKey]
 	if !ok {
-		return nil, fmt.Errorf("unknown recipe type: %s", recipe.Type)
+		return nil, fmt.Errorf("unknown recipe %s", recipe.Name)
 	}
 
 	pipelineInstance, err := builder(root, recipe)
